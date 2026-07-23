@@ -29,27 +29,32 @@ jobs:
         with:
           node-version: 20
           package-manager-cache: false
-      
+
       - name: Install stable npm
         run: npm install -g npm@10.8.0
-      
+
       - name: Show versions
         run: |
           node --version
           npm --version
           which node
           which npm
-      
+
       - name: Clean npm cache
         run: npm cache clean --force
-      
+
       - name: Install dependencies
         run: npm ci --include=dev --no-audit --no-fund
 
-      - name: Verify Vite
+      - name: Verify installation
         run: |
-          npm ls vite
-          ls -la node_modules/.bin/vite
+          pwd
+          ls -la
+          ls -la node_modules | head -20
+          ls -la node_modules/vite
+          find node_modules -name vite | head -20
+          npm bin
+          npm exec vite --version
 
       - name: Build application
         run: npm run build
