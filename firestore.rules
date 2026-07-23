@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function profile() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+    }
+    function isSuperadmin() { return signedIn() && profile().appRole == 'SUPERADMIN'; }
+    function isAdmin() { return signedIn() && profile().appRole in ['SUPERADMIN', 'ADMIN_UNIT']; }
+    function isUnitAdmin(unitId) {
+      return signedIn() && (isSuperadmin() || (profile().appRole == 'ADMIN_UNIT' && unitId in profile().unitIds));
+    }
+
+    // Hanya berisi nama, status, dan email login sintetis. Dibaca sebelum login
+    // agar dropdown nama dapat ditampilkan.
+    match /loginDirectory/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /profiles/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isSuperadmin());
+      allow create, delete: if isSuperadmin();
+      allow update: if isSuperadmin() || (
+        signedIn() && request.auth.uid == uid &&
+        request.resource.data.diff(resource.data).changedKeys().hasOnly(['mustChangePassword', 'updatedAt'])
+      );
+    }
+
+    match /userAppRoles/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /users/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /units/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /roles/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /positions/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /serviceTemplates/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /templateSlots/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /userUnits/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /userRoles/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /eligibilities/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /groups/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /groupMembers/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /musicCollaborations/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /schedulingPolicies/{id} { allow read: if signedIn(); allow write: if isSuperadmin(); }
+    match /pairingRules/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /groupSupportRules/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /scheduleAssignments/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /swapRequests/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /services/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /publishedSchedules/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+
+
+    // Dokumen kompatibilitas untuk seluruh fitur interface lama.
+    // Nantinya dapat dimigrasikan bertahap ke collection terpisah.
+    match /penugasanData/{id} {
+      allow read, write: if signedIn();
+    }
+
+    match /serviceEvents/{id} {
+      allow read: if signedIn();
+      allow create: if isUnitAdmin(request.resource.data.unitId);
+      allow update, delete: if isUnitAdmin(resource.data.unitId);
+    }
+    match /serviceSlots/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /assignments/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /swapAssignments/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.requestedByUid == request.auth.uid;
+      allow update: if isAdmin() || resource.data.requestedByUid == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+  }
+}
