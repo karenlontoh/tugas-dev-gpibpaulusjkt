@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -21,42 +21,24 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 20
-          package-manager-cache: false
+          node-version: 22
+          cache: npm
 
-      - name: Install stable npm
-        run: npm install -g npm@10.8.0
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Show versions
         run: |
           node --version
           npm --version
-          which node
-          which npm
 
-      - name: Clean npm cache
-        run: npm cache clean --force
-
-      - name: Install dependencies
-        run: npm ci --include=dev --no-audit --no-fund
-
-      - name: Verify installation
-        run: |
-          pwd
-          ls -la
-          ls -la node_modules | head -20
-          ls -la node_modules/vite
-          find node_modules -name vite | head -20
-          npm bin
-          npm exec vite --version
-
-      - name: Build application
+      - name: Build
         run: npm run build
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
@@ -67,22 +49,27 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_USE_FIREBASE_EMULATOR: ${{ secrets.VITE_USE_FIREBASE_EMULATOR }}
 
-      - name: Setup GitHub Pages
+      - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload build result
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ./dist
+          path: dist
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
