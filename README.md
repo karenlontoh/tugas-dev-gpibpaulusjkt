@@ -1,4 +1,4 @@
-# Sistem Penugasan GPIB Paulus — Interface Lama + Firebase Baru
+# Sistem Penugasan GPIB Paulus
 
 Project ini mempertahankan menu dan fitur aplikasi lama, termasuk Dashboard, Kinerja Saya, Tukar Jadwal, Jadwal Publik, Pengaturan Akun, Kelola Jadwal, Statistik, Database, dan Add Petugas.
 
