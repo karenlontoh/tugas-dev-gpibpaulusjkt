@@ -166,37 +166,6 @@ const formatDateShort = (dateString) => {
   const date = new Date(dateString);
   return `${date.getDate()}/${date.getMonth()+1}`;
 };
-const PS_VG_DIRECTORY = [
-  'GP Paulus Choir',
-  'PS PKP Paulus',
-  'PS PKB Paulus',
-  'PS PKLU Paulus',
-  'Kolintang Marta Pelkat PKP',
-  'Kolintang Maria Pelkat PKP',
-  'Kolintang Mattea',
-  'Kolintang Deo Gratias SP VI',
-  'Kolintang PKLU',
-  'Angklung PKLU Paulus',
-  'Nafiri Choir',
-  'Hosana Chorale',
-  'PS Jemaat Paulus',
-  'PS Diakonia',
-  'VG Soli Deo',
-  'VG Yepo',
-  'PS PKP Eva SP I',
-  'VG PKP Adam SP I',
-  'VG Ambanua SP II',
-  'PS PKP Lidya SP II',
-  'VG PKP Debora SP III',
-  'PS PKP Naomi SP IV',
-  'PS PKP Filia SP VI',
-  'PS PKP Elizabeth SP VII',
-  'VG Solafide SP VII',
-  'PS Jemaat SP VII',
-  'PS PKP Ruth SP VIII',
-  'VG Agape SP VIII',
-  'PS Jemaat SP VIII',
-];
 
 const UNITS = {
   PRESBITER: 'Presbiter',
@@ -216,7 +185,7 @@ const ROLES = {
   DIAKEN: 'Diaken',
   PENDETA: 'Pendeta',
   MM_PIC: 'PIC Multimedia',
-  MM_CAM: 'Kameraman',
+  MM_CAM: 'Camera',
   MM_SLIDE: 'Operator Slide',
   MM_SWITCH: 'Switcher',
   SOUND_OPS: 'Operator Sound',
@@ -230,8 +199,8 @@ const ROLES = {
   PT_EKA: 'Eka',
   PT_DWI: 'Dwi',
   GP_MEMBER: 'Anggota GP',
-  PS_PEMANDU: 'Pemandu Lagu (Muger)',
-  PS_ORGANIS: 'Organis / Pianis',
+  PS_PEMANDU: 'Pelayan Pujian',
+  PS_ORGANIS: 'Organis',
   PS_PEMUSIK: 'Pemusik',
   PS_TIM_MUSIK: 'Tim Musik',
   PS_CHOIR: 'Paduan Suara/VG'
@@ -419,14 +388,86 @@ const normalizeRoleToken = (value) =>
     .trim();
 
 const MULTIMEDIA_ROLE_ALIASES = {
-  [ROLES.MM_SLIDE]: [ROLES.MM_SLIDE],
-  [ROLES.MM_CAM]: [ROLES.MM_CAM],
-  [ROLES.MM_SWITCH]: [ROLES.MM_SWITCH],
-  [ROLES.MM_PIC]: [ROLES.MM_PIC],
+  [ROLES.MM_SLIDE]: ['Operator Slide', 'Slide', 'Operator Proyektor'],
+  [ROLES.MM_CAM]: ['Camera', 'Kamera', 'Kameraman', 'Camera Operator'],
+  [ROLES.MM_SWITCH]: ['Switcher', 'Operator Switcher'],
+  [ROLES.MM_PIC]: ['PIC Multimedia', 'PIC', 'Koordinator Multimedia'],
 };
 
-const multimediaRoleMatches = (roleValue, requiredRole) =>
-  normalizeRoleToken(roleValue) === normalizeRoleToken(requiredRole);
+const multimediaRoleMatches = (roleValue, requiredRole) => {
+  const actual = normalizeRoleToken(roleValue);
+  const aliases = MULTIMEDIA_ROLE_ALIASES[requiredRole] || [requiredRole];
+  return aliases.some(alias => normalizeRoleToken(alias) === actual);
+};
+
+const formatPersonnelDisplayName = (person) => {
+  if (!person) return '-';
+
+  const cleanName = String(person.name || person.nama || person.displayName || '')
+    .replace(/^(Dkn\.|Pnt\.)\s*/i, '')
+    .trim();
+  if (!cleanName) return '-';
+
+  // Prefix hanya untuk tampilan. Database tidak diubah.
+  // Ambil role dari semua struktur yang digunakan pada data Firebase.
+  const roleValues = [];
+  const roleIds = [];
+
+  const collectRole = value => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(collectRole);
+      return;
+    }
+
+    if (typeof value === 'string') {
+      roleValues.push(value);
+      return;
+    }
+
+    if (typeof value === 'object') {
+      [value.name, value.role, value.roleName, value.nama, value.label, value.code]
+        .filter(Boolean)
+        .forEach(item => roleValues.push(item));
+
+      [value.id, value.roleId]
+        .filter(Boolean)
+        .forEach(item => roleIds.push(String(item).trim().toUpperCase()));
+    }
+  };
+
+  collectRole(person.roles);
+  collectRole(person.role);
+  collectRole(person.roleName);
+  collectRole(person.roleMemberships);
+  collectRole(person._originalRoleMemberships);
+  collectRole(person.roleIds);
+  collectRole(person.roleId);
+  collectRole(person.roleCode);
+  collectRole(person.idRole);
+  collectRole(person.memberships);
+
+  const normalizedRoles = roleValues.map(normalizeRoleToken);
+  const normalizedRoleIds = roleIds.map(value => value.replace(/[^A-Z0-9]/g, ''));
+
+  // Master Role Firebase pada aplikasi:
+  // RL00001 = Diaken, RL00002 = Penatua.
+  const isDiaken =
+    normalizedRoles.some(role => role === 'diaken' || role.includes('diaken')) ||
+    normalizedRoleIds.includes('RL00001') ||
+    hasActiveRole(person, 'Diaken', 'Presbiter');
+
+  const isPenatua =
+    normalizedRoles.some(role => role === 'penatua' || role.includes('penatua')) ||
+    normalizedRoleIds.includes('RL00002') ||
+    hasActiveRole(person, 'Penatua', 'Presbiter');
+
+  if (isDiaken) return `Dkn. ${cleanName}`;
+  if (isPenatua) return `Pnt. ${cleanName}`;
+
+  return cleanName;
+};
 
 
 const unitMatches = (actualValue, expectedUnit) => {
@@ -835,230 +876,6 @@ const SearchableSelect = ({ value, onChange, options = [], disabled = false, pla
 // ==========================================
 // 5. DATABASE DUMMY LENGKAP
 // ==========================================
-const multimediaPersonnelList = [
-  { name: "Albert", roles: [ROLES.MM_CAM] },
-  { name: "Amelia Yedija Simatupang", roles: [ROLES.MM_SLIDE] },
-  { name: "Anathadya Sompotan", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] }, 
-  { name: "Andre Tuankotta", roles: [ROLES.MM_CAM] },
-  { name: "Angel T. Marahsidi", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Ansell Tarigan", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM] },
-  { name: "Arthur J.E. Dien", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Bastian Teterissa", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Ben Manafe", roles: [ROLES.MM_CAM] },
-  { name: "Bryant Felix Sumampouw", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Bryant Immanuel", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM, ROLES.MM_SWITCH] },
-  { name: "Celine M. Zacharias", roles: [ROLES.MM_SLIDE] },
-  { name: "Christian Nathanel", roles: [ROLES.MM_CAM] },
-  { name: "Dhima Alami Terasapta", roles: [ROLES.MM_SLIDE] },
-  { name: "Diana Langelo", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM] },
-  { name: "Donnart Jan Nelwan", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Eden Kristanto", roles: [ROLES.MM_CAM] },
-  { name: "Erick Mandalika", roles: [ROLES.MM_SLIDE] },
-  { name: "Evan Simorangkir", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Excel Raintung", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM] },
-  { name: "Farrel Carrillo", roles: [ROLES.MM_CAM] },
-  { name: "Fritz Gerald Sapulette", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Gabriela A. Pangasah", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM] },
-  { name: "Genory Sanggelorang", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Gita Sarasvati", roles: [ROLES.MM_SLIDE] },
-  { name: "Ivan Sitaniapessy", roles: [ROLES.MM_SWITCH, ROLES.MM_CAM] },
-  { name: "Jeson Abraham", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM] },
-  { name: "Josapat Simangunsong", roles: [ROLES.MM_CAM] },
-  { name: "Judith Hetarie", roles: [ROLES.MM_SLIDE] },
-  { name: "Kayla Manafe", roles: [ROLES.MM_SLIDE] },
-  { name: "Kelvin William Kappuw", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Kevin Huliselan", roles: [ROLES.MM_SLIDE] },
-  { name: "Kineta", roles: [ROLES.MM_SLIDE] },
-  { name: "Louise Anugrahani", roles: [ROLES.MM_SLIDE] },
-  { name: "Marcus Bartolomeus", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Maharani", roles: [ROLES.MM_SLIDE] },
-  { name: "Okta Friyanto", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Putri Ulaen", roles: [ROLES.MM_SLIDE] },
-  { name: "Ruthgama", roles: [ROLES.MM_SLIDE] },
-  { name: "Samuel Hetarie", roles: [ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC] },
-  { name: "Samuel L. Manarisip", roles: [ROLES.MM_SLIDE, ROLES.MM_CAM] },
-  { name: "Tasha Sianipar", roles: [ROLES.MM_SLIDE] },
-  { name: "Tasya Samallo", roles: [ROLES.MM_SLIDE] },
-  { name: "Temmie J. Lendway", roles: [ROLES.MM_SLIDE] },
-  { name: "Verrol Mirah", roles: [ROLES.MM_SLIDE]}
-];
-const INITIAL_USERS = [
-  { name: 'PHMJ (Superadmin)', units: ['Admin'], roles: [ROLES.SUPERADMIN], password: 'admin' },
-  { name: 'Admin Multimedia', units: [UNITS.MULTIMEDIA], roles: [ROLES.ADMIN_UNIT], password: 'admin' },
-  { name: 'Admin Sound', units: [UNITS.SOUND], roles: [ROLES.ADMIN_UNIT], password: 'admin' },
-  { name: 'Admin PA', units: [UNITS.PA], roles: [ROLES.ADMIN_UNIT], password: 'admin' },
-  { name: 'Admin PT', units: [UNITS.PT], roles: [ROLES.ADMIN_UNIT], password: 'admin' },
-  { name: 'Admin Muger', units: [UNITS.MUGER], roles: [ROLES.ADMIN_UNIT], password: 'admin' },
-  { name: "Pdt. Johny Alexander Lontoh", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Dewi Sintha Astadiyan-B", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Rudy Imanuel Ririrhena", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Fonny Barahama", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Fransiska Felubun", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Max Felubun", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Justitia Vox Dei Hattu", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Pdt. Leomardus Takubessy", roles: [ROLES.PENDETA], units: [UNITS.PENDETA] },
-  { name: "Dkn. Yan Bastian Teterissa", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Yakobus Tutuarima", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Yacob Albert Ranga", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Vanda A.V. Dien", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Tirza Hendharto", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Silvy M. Lembong", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Royke Lampow", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Rolly R. Sumendap", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Randhy T. Latuperissa", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. R.AJ. Ponty A. Aipassa", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Petrus A. Nahumury", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Perijen Maarisit", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Paulus Tallulembang", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Okta Friyanto", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Novita Warouw", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Nelson A. Marahsidi", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Nancy L Wehantouw", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Marlon Tupamahu", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Marcus Kappuw", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Magdalena Pattisina", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Linda D. Lubis", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Leddy Tangkere", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. J. Andrew Langelo", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Jonathan C. Wibowo", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Jemi Djodju", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Jeffry Samallo", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Jeanny H. M. Sitompul", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Inneke Mursasongko", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Inang M. K. Pardede", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Imelda S. Tobing", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Herawati Siregar", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Helena M. O. Tambing", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. H. Megio K. Kaloke", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Geraldine C. Sahetapy", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Ferry Tan Dermawan", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Ferry C. Tumurang", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Fadrian Gultom", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Erick R. Mandalika", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Enricko L. Sanggelorang", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Ellen A. Wehantouw", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Djemi Pangasah", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Dicky Kresno Eoh", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Deasy Natalia Rorah", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. David G. Simatupang", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Daniel Hadi Prasetya", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Daniel F. Lolo", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. B. N. Ingeborg Patty", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Astrid Sumampouw", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Anthonius W. Jacobus", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Amerina Harefa", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Alfrida Silalahi - S", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Dkn. Alex Farley Suoth", roles: [ROLES.DIAKEN], units: [UNITS.PRESBITER] },
-  { name: "Pnt. John Pattiwael", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Alfa S. Mandalika", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Rita Luciana Rompas", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Veronica Sapuletej", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Flora Meltje Paat", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Margaritha Sadikin", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Deetje Pinontoan", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Agustinus Marahsidi", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Jasperine Nanletta", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Samuel Tobing", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Vonny Mirah-Ganda", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Debby M. Tendean", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Vicky Mongie", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Richard Tuwanakotta", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Petra Langelo", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Sahat Sianipar", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Sensua Eryta Nelwan", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Korlina Nainggolan", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Ferdinand Eluama", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Roshita Wenas", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Nelma A. Rugebregt", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Moody Wowor", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Benyamin Leo Betty", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Rosalina M. D. Ante", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Iki Terassapta", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Maria J. Kumaat", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Enny R. P. Kalangi", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Reni G. Korompis", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Indra R. W. Kaligis", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Rudy Siregar", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Ade A. Tampubolon", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Lendy R. Sumual", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Tommy Masinambow", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Wulan Sanggelorang", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Herling R. Sanger", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Antonius A. Soeling", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Amanda C. Ottay", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Masniarti Sompie", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Rocky R. Sambuaga", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Maikel Sajangbati", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Max Sela", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Sepny E. Siahaya", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Ferry A. Sumarandak", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Adri L. Manafe", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Theresia Worung", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Cornelia J. Umbas", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Nixon T. Wehantouw", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Griselda Harmin", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Samuel J. Mandang", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Marthinus Bien", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  { name: "Pnt. Robby Hetarie", roles: [ROLES.PENATUA], units: [UNITS.PRESBITER] },
-  // MULTIMEDIA - DATA BARU MULTIROLE
-  ...multimediaPersonnelList.filter(p => p.name !== "Anathadya Sompotan").map(p => ({
-    name: p.name, units: [UNITS.MULTIMEDIA], roles: p.roles
-  })),
-  {
-    name: "Anathadya Sompotan",
-    units: [UNITS.MUGER, UNITS.MULTIMEDIA],
-    roles: [ROLES.PS_PEMANDU, ROLES.MM_SLIDE, ROLES.MM_SWITCH, ROLES.MM_CAM, ROLES.MM_PIC]
-  },
-  // MUGER & PS
-  ...[
-    "Ricko Sanggelorang", "Samuel Tobing", "Suzan C Pattiwael Tangka", "Bobby Moelyono", "Geraldine Supit", 
-    "Jonathan Wibowo", "Nathania Marahsidi", "Zarteus Osok", "Kevin Eluama", "lan Felubun", "Ozzy Marpaung",
-    "Adelaide Simbolon", "Dimu Boeky", "Elsa Nirahuwa", "Nigel Simatupang", "Vicky Andreany", "Edita Siregar", 
-    "Rillo Purba", "Mario Hetharia", "Jeremy Sirait", "Aldo Pardede", "Michael Loukassy", "Dennis Marentek"
-  ].map(name => ({ name, units: [UNITS.MUGER], roles: [ROLES.PS_PEMUSIK] })),
-  ...[
-    "Frida Manafe", "Chika Luhukay", "Novi Damaihati", "Grista Kaban Damanik", "Ria Souissa", "Astrid Sumampouw", 
-    "Armanda Sitompul", "Ferry Kaban", "Torez Pattiwael", "Royke Lampow", "John I M Pattiwael", "Natania Nainggolan",
-    "Lerry Sompotan", "Bernike Aruan", "Pinky Sarajar", "Grace Mahulette", "Teresa Tanasale", "Andrey Aguw", 
-    "Yeremia Lalisang", "Donda Salakory", "Rico Ratoe", "Ferdi Limahelu", "Yonathan Mantik", "Jeremy Tanor", 
-    "Renovan Nache", "Gerry Leka"
-  ].map(name => ({ name, units: [UNITS.MUGER], roles: [ROLES.PS_PEMANDU] })),
-  ...[
-    "Tim Musik Paulus", "Tim Musik Nassaukerk", "Tim Musik TSK 12", "Tim Musik Laudate Dominum", "Tim Musik Sursum Corda"
-  ].map(name => ({ name, units: [UNITS.MUGER], roles: [ROLES.PS_TIM_MUSIK] })),
-  ...[
-    "GP Paulus Choir", "PS PKP Paulus", "PS PKB Paulus", "PS PKLU Paulus", "Kolintang Marta Pelkat PKP", 
-    "Kolintang Maria Pelkat PKP", "Kolintang Mattea", "Kolintang Deo Gratias SP VI", "Kolintang PKLU", 
-    "Angklung PKLU Paulus", "Nafiri Choir", "Hosana Chorale", "PS Jemaat Paulus", "PS Diakonia", "VG Soli Deo", 
-    "VG Yepo", "PS PKP Eva SP I", "VG PKP Adam SP I", "VG Ambanua SP II", "PS PKP Lidya SP II", "VG PKP Deboar SP III", 
-    "PS PKP Naomi SP IV", "PS PKP Filia SP VI", "PS PKP Elizabeth SP VII", "VG Solafide SP VII", "PS Jemaat SP VII", 
-    "PS PKP Ruth SP VIII", "VG Agape SP VIII", "PS Jemaat SP VIII"
-  ].map(name => ({ name, units: [UNITS.PS], roles: [ROLES.PS_CHOIR] })),
-  // DUMMY LAIN
-  { name: "Kevin (GP)", units: [UNITS.GP], roles: [ROLES.GP_MEMBER], password: '123' },
-  { name: "Lita (GP)", units: [UNITS.GP], roles: [ROLES.GP_MEMBER], password: '123' },
-  { name: "Mario (GP)", units: [UNITS.GP], roles: [ROLES.GP_MEMBER], password: '123' },
-  { name: "Budi (Sound)", units: [UNITS.SOUND], roles: [ROLES.SOUND_OPS], password: '123' },
-  { name: "Anto (Sound)", units: [UNITS.SOUND], roles: [ROLES.SOUND_OPS], password: '123' }
-].map((u, i) => {
-  const newP = { ...u };
-  newP.id = `user_${i}`;
-  newP.password = newP.password || '123';
-  newP.assignments = 0;
-  newP.units = newP.units || (newP.unit ? [newP.unit] : []);
-  newP.roles = newP.roles || (newP.role ? [newP.role] : []);
-  newP.pelkatClasses = newP.pelkatClasses || (newP.pelkatClass ? [newP.pelkatClass] : []);
-  delete newP.unit;
-  delete newP.role;
-  delete newP.pelkatClass;
-  return newP;
-});
-const CHOIR_TANDEM = {
-  'Nafiri Choir': { prokantor: 'John I M Pattiwael', pemusik: ['Jonathan Wibowo', 'Geraldine Supit', 'Suzan C Pattiwael Tangka', 'Rillo Purba'] },
-  'Hosana Chorale': { prokantor: 'Armanda Sitompul', pemusik: ['Edita Siregar', 'Rillo Purba'] },
-  'PS Jemaat Paulus': { prokantor: 'Donda Salakory', pemusik: ['Ozzy Marpaung'] },
-  'PS Jemaat SP VII': { prokantor: 'Torez Pattiwael', pemusik: ['Suzan C Pattiwael Tangka'] }
-};
 const calculateDetailedStats = (personnel, assignments, swapRequests = [], customServices = {}) => {
   const stats = {};
   personnel.forEach(p => {
@@ -1234,25 +1051,27 @@ const isAdminPersonnelRecord = (person) => {
 
 const checkPermission = (user, section) => {
   if (!user) return false;
-  if (user.roles?.includes(ROLES.SUPERADMIN)) return true;
-  if (!user.roles?.includes(ROLES.ADMIN_UNIT)) return false;
+  const roles = user.roles || [];
+  const units = user.units || [];
+  const userName = String(user.name || '').trim();
+  const isSuperAdmin =
+    roles.includes(ROLES.SUPERADMIN) ||
+    /admin\s+phmj|super\s*admin/i.test(userName) ||
+    String(user.appRole || '').toUpperCase() === 'SUPERADMIN';
+  const isUnitAdmin =
+    roles.includes(ROLES.ADMIN_UNIT) ||
+    (/^admin\b/i.test(userName) && !isSuperAdmin) ||
+    String(user.appRole || '').toUpperCase() === 'ADMIN_UNIT';
+  if (isSuperAdmin) return true;
+  if (!isUnitAdmin) return false;
+  const hasUnit = target => units.some(unit => unitMatches(unit?.name || unit, target));
   switch(section) {
-    case 'presbiter':
-      return user.units?.includes(UNITS.GP);
-    case 'multimedia':
-      return user.units?.includes(UNITS.MULTIMEDIA);
-    case 'sound':
-      return user.units?.includes(UNITS.SOUND);
-    case 'muger':
-      return (
-        user.units?.includes(UNITS.MUGER) ||
-        user.units?.includes(UNITS.PS) ||
-        user.units?.includes(UNITS.GP)
-      );
-    case 'pelkat':
-      return user.units?.includes(UNITS.PA) || user.units?.includes(UNITS.PT);
-    default:
-      return false;
+    case 'presbiter': return hasUnit(UNITS.PRESBITER) || hasUnit(UNITS.GP);
+    case 'multimedia': return hasUnit(UNITS.MULTIMEDIA);
+    case 'sound': return hasUnit(UNITS.SOUND);
+    case 'muger': return hasUnit(UNITS.MUGER) || hasUnit(UNITS.PS) || hasUnit(UNITS.GP);
+    case 'pelkat': return hasUnit(UNITS.PA) || hasUnit(UNITS.PT);
+    default: return false;
   }
 };
 // ==========================================
@@ -1927,6 +1746,28 @@ const UserSettings = ({ user, setUser, personnel, setPersonnel }) => {
   );
 };
 const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
+  const [psvgGroups, setPsvgGroups] = useState([]);
+
+  useEffect(() => {
+    return onSnapshot(collection(db, 'groups'), snapshot => {
+      const rows = snapshot.docs
+        .map(row => {
+          const data = row.data() || {};
+          return {
+            id: row.id,
+            name: data.timName || data.groupName || data.name || row.id,
+            type: String(data.type || '').toUpperCase(),
+            status: data.status || 'active',
+          };
+        })
+        .filter(row =>
+          row.status !== 'inactive' &&
+          ['CHOIR', 'PS', 'VG', 'VOCAL_GROUP', 'PADUAN_SUARA', 'PS_VG'].includes(row.type)
+        )
+        .sort((a, b) => a.name.localeCompare(b.name, 'id'));
+      setPsvgGroups(rows);
+    }, error => console.error('Gagal memuat PS/VG dari database:', error));
+  }, []);
   const emptyForm = {
     name: '', email: '', phone: '', wargaJemaat: '', status: 'active',
     unit: '', role: '', pelkatClass: '', multimediaAssignment: 'Semua Jam', password: '1234'
@@ -1976,7 +1817,7 @@ const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
               id: row.id,
               name: data.name || data.roleName || data.label || '',
               unitId: data.unitId || '',
-              unitName: data.unitName || data.unit || '',
+              unitName: data.unitName || data.unit || data.namaUnit || '',
               status: data.status || 'active',
             };
           })
@@ -2235,8 +2076,8 @@ const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     const { name, email, phone, unit, role, multimediaAssignment, password, wargaJemaat } = addForm;
-    if (!name || !email || !phone || !unit || !role || wargaJemaat === '') {
-      await showAlert('Mohon lengkapi Nama, Email, No. Handphone, Warga Jemaat, Unit, dan Role.'); return;
+    if (!name || !unit || !role || wargaJemaat === '') {
+      await showAlert('Mohon lengkapi Nama, Warga Jemaat, Unit, dan Role.'); return;
     }
     if (!isValidEmail(email)) { await showAlert('Format email belum valid.'); return; }
     const normalizedPhone = normalizePhone(phone);
@@ -2300,10 +2141,26 @@ const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
     return personnel
       .filter(p => !isSystemAdminAccount(p))
       .filter(p => {
-        const { unitMemberships } = normalizeMemberships(p);
+        const { unitMemberships, roleMemberships } = normalizeMemberships(p);
+
         const sectionMatch =
           activeSection === 'ALL' ||
-          unitMemberships.some(x => x.name === selectedSection?.unit);
+
+          (
+            activeSection === 'CHOIR' &&
+            roleMemberships.some(role =>
+              String(role?.status || 'active').toLowerCase() !== 'inactive' &&
+              genericRoleMatches(role?.name, ROLES.PS_CHOIR)
+            )
+          ) ||
+
+          (
+            activeSection !== 'CHOIR' &&
+            unitMemberships.some(unit =>
+              String(unit?.status || 'active').toLowerCase() !== 'inactive' &&
+              unitMatches(unit?.name, selectedSection?.unit)
+            )
+          );
 
         const multimediaRuleMatch =
           activeSection !== 'MULTIMEDIA' ||
@@ -2327,26 +2184,16 @@ const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
           .toLowerCase()
           .includes(q)
       )
-      .sort((a,b)=>(a.name||'').localeCompare(b.name||'', 'id'));
+      .sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', 'id')
+      );
   }, [
     personnel,
     activeSection,
     selectedSection?.unit,
     searchTerm,
     multimediaRuleFilter,
-    isSuperAdmin,
-    adminUnitNames.join('|'),
   ]);
-  const psvgDirectoryRows = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-    return PS_VG_DIRECTORY
-      .filter(name => !q || name.toLowerCase().includes(q))
-      .map((name, index) => ({
-        id: `PSVG${String(index + 1).padStart(3, '0')}`,
-        name,
-        status: 'active',
-      }));
-  }, [searchTerm]);
 
   const similarNameMatches = useMemo(() =>
     addForm.name.trim()
@@ -2416,15 +2263,29 @@ const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
       </form></div>}
 
     <div className="bg-white rounded-xl shadow border mb-4 overflow-hidden"><div className="p-4 border-b bg-gray-50 flex flex-col lg:flex-row gap-3 justify-between"><div className="flex w-full flex-col gap-3 lg:flex-row lg:items-center"><div className="relative w-full lg:max-w-md"><Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400"/><input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" placeholder="Cari nama, unit, role..."/></div>{activeSection === 'MULTIMEDIA' && <select value={multimediaRuleFilter} onChange={e=>setMultimediaRuleFilter(e.target.value)} className="w-full rounded-lg border bg-white px-3 py-2 text-sm lg:w-auto"><option value="ALL">Semua Ketentuan</option>{Object.entries(MULTIMEDIA_RULE_LABELS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>}</div><div className="text-xs text-gray-500">
-  <strong>{activeSection === 'CHOIR' ? psvgDirectoryRows.length : filteredPersonnel.length}</strong>
+  <strong>{filteredPersonnel.length}</strong>
   {activeSection === 'CHOIR' ? ' PS/VG' : ' petugas'}
 </div></div><div className="flex gap-2 overflow-x-auto p-3 border-b">{databaseSections.map(section=>{
-  const count = section.id === 'CHOIR'
-    ? PS_VG_DIRECTORY.length
-    : personnel
-        .filter(p => !isSystemAdminAccount(p))
-        .filter(p => section.id === 'ALL' || normalizeMemberships(p).unitMemberships.some(x => x.name === section.unit))
-        .length;
+  const count = personnel
+    .filter(p => !isSystemAdminAccount(p))
+    .filter(p => {
+      const { unitMemberships, roleMemberships } = normalizeMemberships(p); 
+
+      if (section.id === 'ALL') return true;  
+
+      if (section.id === 'CHOIR') {
+        return roleMemberships.some(role =>
+          String(role?.status || 'active').toLowerCase() !== 'inactive' &&
+          genericRoleMatches(role?.name, ROLES.PS_CHOIR)
+        );
+      } 
+
+      return unitMemberships.some(unit =>
+        String(unit?.status || 'active').toLowerCase() !== 'inactive' &&
+        unitMatches(unit?.name, section.unit)
+      );
+    })
+    .length;
 
   return <button
     key={section.id}
@@ -2435,45 +2296,7 @@ const AdminDatabase = ({ personnel, setPersonnel, currentUser }) => {
   </button>;
 })}</div></div>
 
-    {activeSection === 'CHOIR' && (
-      <div className="overflow-x-auto rounded bg-white shadow">
-        <table className="min-w-full divide-y text-xs sm:text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left uppercase">Nama</th>
-              <th className="px-4 py-3 text-left uppercase">Kategori</th>
-              <th className="px-4 py-3 text-left uppercase">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {psvgDirectoryRows.map(row => (
-              <tr key={row.id} className="hover:bg-gray-50">
-                <td className="whitespace-nowrap px-4 py-3 font-medium">{row.name}</td>
-                <td className="px-4 py-3 text-gray-600">
-                  {/kolintang/i.test(row.name)
-                    ? 'Kolintang'
-                    : /angklung/i.test(row.name)
-                      ? 'Angklung'
-                      : /\bVG\b/i.test(row.name)
-                        ? 'Vocal Group'
-                        : 'Paduan Suara / Choir'}
-                </td>
-                <td className="px-4 py-3"><StatusBadge status="active" /></td>
-              </tr>
-            ))}
-            {!psvgDirectoryRows.length && (
-              <tr>
-                <td colSpan={3} className="p-12 text-center text-gray-400">
-                  PS/VG tidak ditemukan.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    )}
-
-    {activeSection !== 'CHOIR' && (
+    {(
       <div className="overflow-x-auto rounded bg-white shadow">
         <table className="min-w-full divide-y text-xs sm:text-sm">
           <thead className="bg-gray-50">
@@ -2989,8 +2812,8 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
   const isPublished = publishedSchedules.includes(`${selectedMonth}-${activeUnitTab}`);
   const baseCanEdit = (!isPublished || unlockEdit);
 
-  const isSuperScheduleAdmin = user?.roles?.includes(ROLES.SUPERADMIN);
-  const isUnitScheduleAdmin = user?.roles?.includes(ROLES.ADMIN_UNIT);
+  const isSuperScheduleAdmin = checkPermission(user, 'multimedia') && (user?.roles?.includes(ROLES.SUPERADMIN) || /admin\s+phmj|super\s*admin/i.test(String(user?.name || '')));
+  const isUnitScheduleAdmin = !isSuperScheduleAdmin && (user?.roles?.includes(ROLES.ADMIN_UNIT) || /^admin\b/i.test(String(user?.name || '')) || String(user?.appRole || '').toUpperCase() === 'ADMIN_UNIT');
   const isGpScheduleAdmin =
     isUnitScheduleAdmin &&
     (user?.units || []).some(unit => unitMatches(unit, UNITS.GP));
@@ -3065,7 +2888,6 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
   const canEdit = canEditTab;
   const getVal = (date, cat, catId, key) => assignments[date]?.[cat]?.[catId]?.[key]?.userId || "";
 
-  const STATIC_CHOIR_NAMES = PS_VG_DIRECTORY;
   const getGroupMemberIds = groupId => personnel.filter(person =>
     (person.musicTeams || []).some(team => String(team.id) === String(groupId))
   ).map(person => person.id);
@@ -3510,11 +3332,65 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                 });
               } else if (unit === 'muger') {
                 const choirGroups = [
-                  ...STATIC_CHOIR_NAMES.map((name,index)=>({id:`CHOIR_STATIC_${String(index+1).padStart(2,'0')}`,name})),
-                  ...mugerGroups.filter(group=>group.status!=='inactive'&&!['MUSIC_TEAM','TIM_MUSIK','MUGER_TEAM'].includes(group.type)).map(group=>({id:group.id,name:group.name})),
-                  ...mugerCollaborations.filter(item=>!['PAIRING','TANDEM','DUET'].includes(String(item.type||'').toUpperCase())).map(item=>({id:item.id,name:item.name||item.title||item.groupName||item.id}))
-                ].filter((item,index,rows)=>item.name&&rows.findIndex(other=>normalizePersonnelName(other.name)===normalizePersonnelName(item.name))===index);
-
+                  ...personnel
+                    .filter(person =>
+                      String(person.status || 'active').toLowerCase() !== 'inactive' &&
+                      hasActiveRole(person, ROLES.PS_CHOIR)
+                    )
+                    .map(person => ({
+                      id: person.id,
+                      name: person.name,
+                      source: 'PERSONNEL',
+                    })),
+                  
+                  ...mugerGroups
+                    .filter(group =>
+                      group.status !== 'inactive' &&
+                      [
+                        'CHOIR',
+                        'PS',
+                        'VG',
+                        'VOCAL_GROUP',
+                        'PADUAN_SUARA',
+                        'PS_VG',
+                      ].includes(String(group.type || '').toUpperCase())
+                    )
+                    .map(group => ({
+                      id: group.id,
+                      name: group.name,
+                      source: 'GROUP',
+                    })),
+                  
+                  ...mugerCollaborations
+                    .filter(item =>
+                      [
+                        'CHOIR',
+                        'PS',
+                        'VG',
+                        'PS_VG',
+                        'VOCAL_GROUP',
+                        'PADUAN_SUARA',
+                      ].includes(String(item.type || '').toUpperCase())
+                    )
+                    .map(item => ({
+                      id: item.groupId || item.choirId || item.id,
+                      name:
+                        item.groupName ||
+                        item.choirName ||
+                        item.name ||
+                        item.title ||
+                        item.id,
+                      source: 'COLLABORATION',
+                    })),
+                ].filter(
+                  (item, index, rows) =>
+                    item.name &&
+                    rows.findIndex(
+                      other =>
+                        normalizePersonnelName(other.name) ===
+                        normalizePersonnelName(item.name)
+                    ) === index
+                );
                 // Pilih PS/VG lebih dulu supaya prokantor/pemusik dapat mengikuti tandeman PS/VG.
                 if (!next[date].services[svc.id]['ps_vg1_name']?.userId && choirGroups.length > 0) {
                   const choirUsage = {};
@@ -3560,9 +3436,19 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                 const selectedChoirName =
                   choirGroups.find(group => String(group.id) === String(selectedChoirId))?.name ||
                   personnel.find(person => String(person.id) === String(selectedChoirId))?.name || '';
-                const selectedChoirTandem = CHOIR_TANDEM[selectedChoirName] || null;
-                const forcedProkantor = selectedChoirTandem?.prokantor || null;
-                const forcedPemusikPool = selectedChoirTandem?.pemusik || [];
+                const selectedChoirTandem = mugerCollaborations.find(item => {
+                  const linkedId = item.groupId || item.choirId || item.psVgId || item.sourceGroupId;
+                  const linkedName = item.groupName || item.choirName || item.psVgName || item.name || item.title;
+                  return (
+                    (linkedId && String(linkedId) === String(selectedChoirId)) ||
+                    (linkedName && normalizePersonnelName(linkedName) === normalizePersonnelName(selectedChoirName))
+                  );
+                }) || null;
+                const forcedProkantor = selectedChoirTandem?.prokantorName || selectedChoirTandem?.prokantor || selectedChoirTandem?.singerName || null;
+                const forcedPemusikPoolRaw = selectedChoirTandem?.pemusikNames || selectedChoirTandem?.pemusik || selectedChoirTandem?.musicians || [];
+                const forcedPemusikPool = Array.isArray(forcedPemusikPoolRaw)
+                  ? forcedPemusikPoolRaw
+                  : String(forcedPemusikPoolRaw || '').split(',').map(value => value.trim()).filter(Boolean);
 
                 const is06_17SP1 = svc.time === '06:00' || (svc.time.includes('17:00') && svc.label.includes('SP 1'));
                 const is08 = svc.time === '08:00';
@@ -3939,7 +3825,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
   const renderOptions = (filterFn, sortFn = null) => {
     const rows = personnel.filter(filterFn);
     if (sortFn) rows.sort(sortFn);
-    return rows.map(p => <option key={p.id} value={p.id}>{p.name} ({assignmentCounts[p.id]?.byMonth[selectedMonth] || 0})</option>);
+    return rows.map(p => <option key={p.id} value={p.id}>{formatPersonnelDisplayName(p)} ({assignmentCounts[p.id]?.byMonth[selectedMonth] || 0})</option>);
   };
   const renderMugerDailyView = () => {
     const dates = getServiceDatesInMonth(selectedMonth, customServices);
@@ -3947,12 +3833,70 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
       group.status !== 'inactive' &&
       ['MUSIC_TEAM', 'TIM_MUSIK', 'MUGER_TEAM'].includes(group.type)
     );
+    const personnelChoirGroups = personnel
+      .filter(person =>
+        String(person.status || 'active').toLowerCase() !== 'inactive' &&
+        hasActiveRole(person, ROLES.PS_CHOIR)
+      )
+      .map(person => ({
+        id: person.id,
+        name: person.name,
+        source: 'PERSONNEL',
+      }));
     const choirChoices = [
-      ...STATIC_CHOIR_NAMES.map((name,index)=>({id:`CHOIR_STATIC_${String(index+1).padStart(2,'0')}`,name})),
-      ...mugerGroups.filter(group=>group.status!=='inactive'&&['CHOIR','PS','VG','VOCAL_GROUP','PADUAN_SUARA'].includes(group.type)).map(group=>({id:group.id,name:group.name})),
-      ...mugerCollaborations.filter(item=>['CHOIR','PS_VG','VOCAL_GROUP'].includes(String(item.type||'').toUpperCase())).map(item=>({id:item.id,name:item.name||item.title||item.groupName||item.id}))
-    ].filter((item,index,rows)=>item.name&&rows.findIndex(other=>normalizePersonnelName(other.name)===normalizePersonnelName(item.name))===index);
-
+      // PS/VG yang dimasukkan melalui Master Petugas
+      ...personnelChoirGroups,
+    
+      // PS/VG dari groups
+      ...mugerGroups
+        .filter(group =>
+          group.status !== 'inactive' &&
+          [
+            'CHOIR',
+            'PS',
+            'VG',
+            'VOCAL_GROUP',
+            'PADUAN_SUARA',
+            'PS_VG',
+          ].includes(String(group.type || '').toUpperCase())
+        )
+        .map(group => ({
+          id: group.id,
+          name: group.name,
+          source: 'GROUP',
+        })),
+      
+      // PS/VG dari collaboration
+      ...mugerCollaborations
+        .filter(item =>
+          [
+            'CHOIR',
+            'PS',
+            'VG',
+            'PS_VG',
+            'VOCAL_GROUP',
+            'PADUAN_SUARA',
+          ].includes(String(item.type || '').toUpperCase())
+        )
+        .map(item => ({
+          id: item.groupId || item.choirId || item.id,
+          name:
+            item.groupName ||
+            item.choirName ||
+            item.name ||
+            item.title ||
+            item.id,
+          source: 'COLLABORATION',
+        })),
+    ].filter(
+      (item, index, rows) =>
+        item.name &&
+        rows.findIndex(
+          other =>
+            normalizePersonnelName(other.name) ===
+            normalizePersonnelName(item.name)
+        ) === index
+    );
     const toggleDate = date => {
       setExpandedDates(current => {
         const next = new Set(current);
@@ -3974,7 +3918,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
     const personSelect = (date,svc,slotKey,label,filterFn) => {
       const selectedId=getVal(date,'services',svc.id,slotKey);
       const options=personnel.filter(person=>filterFn(person)&&(String(person.id)===String(selectedId)||isAvailableForService(person,date,svc.id,slotKey)))
-        .sort((a,b)=>a.name.localeCompare(b.name,'id')).map(person=>({value:person.id,label:`${person.name} (${assignmentCounts[person.id]?.byMonth[selectedMonth]||0})`}));
+        .sort((a,b)=>a.name.localeCompare(b.name,'id')).map(person=>({value:person.id,label:`${formatPersonnelDisplayName(person)} (${assignmentCounts[person.id]?.byMonth[selectedMonth]||0})`}));
       const editable = canEditSlot(date, svc, slotKey, 'muger');
       return <label className="block"><span className="mb-1 block text-xs font-semibold text-gray-600">{label}</span>
         <SearchableSelect disabled={!editable} value={selectedId} options={options} onChange={value=>updateAssignment(date,'services',svc.id,slotKey,value)}/></label>;
@@ -4193,7 +4137,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
     const monthDates = getServiceDatesInMonth(selectedMonth, customServices);
     const nameOf = value => {
       const person = personnel.find(p => String(p.id) === String(value));
-      if (person) return person.name;
+      if (person) return formatPersonnelDisplayName(person);
       const group = mugerGroups.find(g =>
         [g.id, g.groupId, g.code, g.teamId].some(id => String(id || '') === String(value))
       );
@@ -4425,7 +4369,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
             {dates.map(date => {
               const customRows=customServices[date]||[];
               const hasSundayService=getServicesForDate(date,customServices).some(svc=>!svc.isCustom&&/ibadah hari minggu/i.test(String(svc.label||'')));
-              const slideOptions=slideCreatorOptions.map(person=>({value:person.id,label:person.name}));
+              const slideOptions=slideCreatorOptions.map(person=>({value:person.id,label:formatPersonnelDisplayName(person)}));
               if(!hasSundayService&&!customRows.length)return null;
               return <div key={`creator-${date}`} className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
                 <div className="mb-3 font-bold text-blue-900">{formatDateIndo(date)}</div>
@@ -4486,9 +4430,9 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                             const isGP = isIKM && (colNum >= 2 && colNum <= 4);
                             if (isGP) return (p.units || []).includes(UNITS.GP);
                             if ((p.units || []).includes(UNITS.PRESBITER)) {
-                              if (colNum === 1) return (p.roles || []).includes(ROLES.PENATUA);
-                              if (!isIKM && colNum === 2) return (p.roles || []).includes(ROLES.PENATUA);
-                              if (!isIKM && colNum === 4) return (p.roles || []).includes(ROLES.DIAKEN);
+                              if (colNum === 1) return hasActiveRole(p, ROLES.PENATUA, UNITS.PRESBITER);
+                              if (!isIKM && colNum === 2) return hasActiveRole(p, ROLES.PENATUA, UNITS.PRESBITER);
+                              if (!isIKM && colNum === 4) return hasActiveRole(p, ROLES.DIAKEN, UNITS.PRESBITER);
                               if (isIKM && (colNum >= 2 && colNum <= 4)) return false; 
                               return true;
                             }
@@ -4555,7 +4499,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                                     : (a, b) => (a.name || '').localeCompare(b.name || '', 'id'))
                                   .map(person => ({
                                     value: person.id,
-                                    label: `${person.name} (${assignmentCounts[person.id]?.byMonth[selectedMonth] || 0})`,
+                                    label: `${formatPersonnelDisplayName(person)} (${assignmentCounts[person.id]?.byMonth[selectedMonth] || 0})`,
                                   }))}
                                 onChange={value => updateAssignment(date, 'services', svc.id, col.id, value)}
                               />
@@ -4761,7 +4705,7 @@ const ScheduleViewPublic = ({ services, personnel, assignments, selectedDate, on
   const resolveAssigneeName = uid => {
     if (!uid) return '-';
     const person = personnel.find(p => String(p.id) === String(uid));
-    if (person) return person.name;
+    if (person) return formatPersonnelDisplayName(person);
     const group = mugerGroups.find(g =>
       [g.id, g.groupId, g.code, g.teamId].some(value => String(value || '') === String(uid))
     );
@@ -5202,6 +5146,23 @@ const mergePersonnelDuplicates = (rows = []) => {
       pelkatClasses: [...new Set([...(previous.pelkatClasses || []), ...(row.pelkatClasses || []), ...(row.pelkatClass ? [row.pelkatClass] : [])])],
       musicTeams: [...teamMap.values()],
       collaborations: [...collaborationMap.values()],
+      unitMemberships: [
+        ...new Map(
+          [...(previous.unitMemberships || []), ...(row.unitMemberships || [])]
+            .filter(item => item?.name)
+            .map(item => [normalizeRoleToken(item.name), item])
+        ).values(),
+      ],
+      roleMemberships: [
+        ...new Map(
+          [...(previous.roleMemberships || []), ...(row.roleMemberships || [])]
+            .filter(item => item?.name || item?.roleId || item?.id)
+            .map(item => [
+              `${normalizeRoleToken(item.unit || '')}::${normalizeRoleToken(item.name || item.roleName || '')}::${String(item.roleId || item.id || '')}`,
+              item,
+            ])
+        ).values(),
+      ],
       multimediaAssignment: previous.multimediaAssignment || row.multimediaAssignment,
     });
   }
@@ -5222,11 +5183,11 @@ const loadPersonnelFromNormalizedCollections = async () => {
 
   const unitsById = new Map(unitSnap.docs.map(row => {
     const data = row.data();
-    return [row.id, data.unitName || data.name || row.id];
+    return [row.id, data.unitName || data.name || data.nama || data.label || row.id];
   }));
   const rolesById = new Map(roleSnap.docs.map(row => {
     const data = row.data();
-    return [row.id, data.roleName || data.name || row.id];
+    return [row.id, data.roleName || data.name || data.nama || data.namaRole || data.role || data.label || row.id];
   }));
 
   const activeMasterRoles = roleSnap.docs
@@ -5234,9 +5195,9 @@ const loadPersonnelFromNormalizedCollections = async () => {
       const data = row.data() || {};
       return {
         id: row.id,
-        name: data.roleName || data.name || '',
+        name: data.roleName || data.name || data.nama || data.namaRole || data.role || data.label || '',
         unitId: data.unitId || '',
-        unitName: data.unitName || data.unit || '',
+        unitName: data.unitName || data.unit || data.namaUnit || '',
         status: data.status || 'active',
       };
     })
@@ -5279,7 +5240,10 @@ const loadPersonnelFromNormalizedCollections = async () => {
 
   for (const row of userUnitSnap.docs) {
     const data = row.data();
-    const userId = String(data.userId || '');
+    const userId = String(
+      data.userId || data.userID || data.personId || data.personID ||
+      data.personnelId || data.petugasId || data.idUser || data.uid || ''
+    ).trim();
     if (!userId) continue;
 
     const rawUnitName = data.unitName || unitsById.get(String(data.unitId || '')) || '';
@@ -5309,7 +5273,10 @@ const loadPersonnelFromNormalizedCollections = async () => {
 
   for (const row of userRoleSnap.docs) {
     const data = row.data() || {};
-    const userId = String(data.userId || '');
+    const userId = String(
+      data.userId || data.userID || data.personId || data.personID ||
+      data.personnelId || data.petugasId || data.idUser || data.uid || ''
+    ).trim();
     if (!userId) continue;
 
     const rawUnitName =
@@ -5318,26 +5285,40 @@ const loadPersonnelFromNormalizedCollections = async () => {
       '';
 
     const canonicalRole = canonicalizeMasterRole(
-      data.roleName || '',
-      String(data.roleId || ''),
+      data.roleName || data.name || data.nama || data.namaRole || data.role || data.label || '',
+      String(data.roleId || data.roleID || data.idRole || data.roleCode || data.role_id || data.id_role || ''),
       rawUnitName
     );
 
-    // Role yang tidak terdaftar aktif di Master Role tidak ditampilkan.
-    if (!canonicalRole) continue;
+    // Jangan buang role user hanya karena struktur field master berbeda.
+    // Gunakan data mentah sebagai fallback agar Penatua/Diaken dan role unit tetap terbaca.
+    const fallbackRoleId = String(data.roleId || data.roleID || data.idRole || data.roleCode || data.role_id || data.id_role || '').trim();
+    const fallbackRoleName =
+      data.roleName || data.name || data.nama || data.namaRole || data.role || data.label ||
+      rolesById.get(fallbackRoleId) || '';
+
+    const resolvedRole = canonicalRole || (fallbackRoleName ? {
+      id: fallbackRoleId,
+      name: fallbackRoleName,
+      unitId: String(data.unitId || ''),
+      unitName: rawUnitName,
+    } : null);
+
+    if (!resolvedRole) continue;
 
     const unitName =
-      canonicalRole.unitName ||
+      resolvedRole.unitName ||
       rawUnitName ||
-      unitsById.get(String(canonicalRole.unitId || '')) ||
+      unitsById.get(String(resolvedRole.unitId || '')) ||
       '';
 
     if (!roleRowsByUser.has(userId)) roleRowsByUser.set(userId, []);
 
     const memberships = roleRowsByUser.get(userId);
     const canonicalMembership = {
-      id: canonicalRole.id,
-      name: canonicalRole.name,
+      id: resolvedRole.id,
+      roleId: resolvedRole.id,
+      name: resolvedRole.name,
       unit: unitName,
       status: data.status || 'active',
     };
@@ -5404,10 +5385,13 @@ const loadPersonnelFromNormalizedCollections = async () => {
       roleMemberships,
       units: unitMemberships.filter(x => x.status !== 'inactive').map(x => x.name),
       roles: roleMemberships.filter(x => x.status !== 'inactive').map(x => x.name),
+      roleIds: roleMemberships.filter(x => x.status !== 'inactive').map(x => x.roleId || x.id).filter(Boolean),
       assignments: data.assignments || 0,
     };
   });
-
+  console.log(
+    rows.find(p => p.name === "GP Paulus Choir")
+  );
   return mergePersonnelDuplicates(rows);
 };
 
@@ -5581,7 +5565,7 @@ const MasterCrudPage = ({ type, currentUser }) => {
               ...data,
               name: data.name || data.roleName || data.label || '',
               unitId: data.unitId || data.unitCode || '',
-              unitName: data.unitName || data.unit || '',
+              unitName: data.unitName || data.unit || data.namaUnit || '',
               description: data.description || data.notes || '',
               status: data.status || 'active',
             };
@@ -6144,13 +6128,39 @@ const MainApp = () => {
       if (roleCodes.some(code => code === 'SUPERADMIN' || code === 'AR001')) appRole = 'SUPERADMIN';
       else if (roleCodes.some(code => code === 'ADMIN_UNIT' || code === 'AR002')) appRole = 'ADMIN_UNIT';
     }
-    const mappedRoles = appRole === 'SUPERADMIN' ? [ROLES.SUPERADMIN] : appRole === 'ADMIN_UNIT' ? [ROLES.ADMIN_UNIT] : (legacy?.roles || []);
+    const loginName = String(loginUser.name || '').trim();
+    const isPhmjAdminName = /admin\s+phmj|super\s*admin/i.test(loginName);
+    const isUnitAdminName = /^admin\b/i.test(loginName) && !isPhmjAdminName;
+    if (appRole === 'USER' && isPhmjAdminName) appRole = 'SUPERADMIN';
+    if (appRole === 'USER' && isUnitAdminName) appRole = 'ADMIN_UNIT';
+
+    const mappedRoles = appRole === 'SUPERADMIN'
+      ? [ROLES.SUPERADMIN]
+      : appRole === 'ADMIN_UNIT'
+        ? [ROLES.ADMIN_UNIT]
+        : (legacy?.roles || []);
+
+    let resolvedUnits = loginUser.units?.length
+      ? [...loginUser.units]
+      : profile.unitNames?.length
+        ? [...profile.unitNames]
+        : profile.units?.length
+          ? [...profile.units]
+          : (legacy?.units || []);
+
+    if (!resolvedUnits.length && isUnitAdminName) {
+      const inferredUnit = loginName.replace(/^admin\s+/i, '').trim();
+      if (inferredUnit) resolvedUnits = [inferredUnit];
+    }
+
     const signedUser = {
       ...(legacy || {}),
       id: legacy?.id || profile.personId || loginUser.id,
       name: loginUser.name,
       roles: mappedRoles,
-      units: legacy?.units || profile.unitIds || [],
+      units: resolvedUnits,
+      appRole,
+      loginRoleLabel: loginUser.loginRoleLabel,
       profileUid: credential.user.uid,
       mustChangePassword: profile.mustChangePassword === true,
     };
