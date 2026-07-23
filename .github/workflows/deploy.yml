@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -31,7 +31,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --include=dev
+        timeout-minutes: 10
+        run: |
+          node --version
+          npm --version
+          npm config get registry
+          npm ci --include=dev --verbose --no-audit --no-fund
 
       - name: Build application
         run: npm run build
