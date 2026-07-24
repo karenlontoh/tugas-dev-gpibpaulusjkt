@@ -755,17 +755,36 @@ const getAllPelkatLabels = (classes = []) => {
   const allOptions = [...(PELKAT_CONFIG.PA || []), ...(PELKAT_CONFIG.PT || [])];
   return classes.map(id => allOptions.find(c => c.id === id)?.label || id).join(', ');
 };
+const DATE_SETTING_ID = '__date_service_setting__';
+const getDateServiceSetting = (dateString, customServices = {}) =>
+  (customServices[dateString] || []).find(item => item?.isDateSetting || item?.id === DATE_SETTING_ID) || null;
+const getCustomServicesOnly = (dateString, customServices = {}) =>
+  (customServices[dateString] || []).filter(item => !item?.isDateSetting && item?.id !== DATE_SETTING_ID);
 const getServicesForDate = (dateString, customServices = {}) => {
   if (!dateString) return [];
   const isSunday = new Date(dateString).getDay() === 0;
-  let svcs = isSunday ? [...SUNDAY_SERVICES] : [];
-  const hasPaskah = customServices[dateString] && customServices[dateString].some(s => s.label.toLowerCase().includes('paskah'));
+  const dateSetting = getDateServiceSetting(dateString, customServices);
+  const isCommunion = dateSetting?.serviceMode === 'HOLY_COMMUNION';
+  let svcs = isSunday
+    ? SUNDAY_SERVICES.map(service => ({
+        ...service,
+        serviceMode: isCommunion ? 'HOLY_COMMUNION' : 'REGULAR',
+        isCommunion,
+      }))
+    : [];
+  const customRows = getCustomServicesOnly(dateString, customServices);
+  const hasPaskah = customRows.some(service => String(service.label || '').toLowerCase().includes('paskah'));
   if ((isSunday && dateString.endsWith('-04-05')) || hasPaskah) {
-    svcs = svcs.filter(s => s.time !== '06:00' && s.time !== '08:00');
+    svcs = svcs.filter(service => service.time !== '06:00' && service.time !== '08:00');
   }
-  if (customServices[dateString]) {
-    svcs = [...svcs, ...customServices[dateString]];
-  }
+  svcs = [
+    ...svcs,
+    ...customRows.map(service => ({
+      ...service,
+      serviceMode: service.serviceMode || (isCommunion ? 'HOLY_COMMUNION' : 'REGULAR'),
+      isCommunion: service.isCommunion ?? isCommunion,
+    })),
+  ];
   svcs.sort((a, b) => (a.time || '00:00').localeCompare(b.time || '00:00'));
   return svcs;
 };
@@ -2446,12 +2465,63 @@ const isPastCutoff = (dateStr, units = []) => {
   const today = new Date();
   return today > cutoffDate;
 };
+
+const getSwapTaskRequirement = (task) => {
+  const path = task?.path || {};
+  const category = String(path.category || '');
+  const key = String(path.key || '');
+  const catId = String(path.catId || '');
+
+  if (category === 'services') {
+    if (/^mm_slide$/i.test(key)) return { unit: UNITS.MULTIMEDIA, roles: [ROLES.MM_SLIDE], label: ROLES.MM_SLIDE };
+    if (/^mm_cam\d*$/i.test(key)) return { unit: UNITS.MULTIMEDIA, roles: [ROLES.MM_CAM], label: ROLES.MM_CAM };
+    if (/^mm_switch$/i.test(key)) return { unit: UNITS.MULTIMEDIA, roles: [ROLES.MM_SWITCH], label: ROLES.MM_SWITCH };
+    if (/^mm_pic$/i.test(key)) return { unit: UNITS.MULTIMEDIA, roles: [ROLES.MM_PIC], label: ROLES.MM_PIC };
+    if (/^sound\d*$/i.test(key)) return { unit: UNITS.SOUND, roles: [ROLES.SOUND_OPS], label: ROLES.SOUND_OPS };
+    if (/^ps_pemandu\d*$/i.test(key)) return { unit: UNITS.MUGER, roles: [ROLES.PS_PEMANDU], label: ROLES.PS_PEMANDU };
+    if (/^ps_organis$/i.test(key)) return { unit: UNITS.MUGER, roles: [ROLES.PS_ORGANIS, ROLES.PS_PEMUSIK], label: ROLES.PS_ORGANIS };
+    if (/^ps_pemusik\d*$/i.test(key)) return { unit: UNITS.MUGER, roles: [ROLES.PS_PEMUSIK], label: ROLES.PS_PEMUSIK };
+    if (/^ps_tim_musik$/i.test(key)) return { unit: UNITS.MUGER, roles: [ROLES.PS_TIM_MUSIK], label: ROLES.PS_TIM_MUSIK, teamOnly: true };
+    if (/^ps_vg\d+_name$/i.test(key)) return { unit: UNITS.PS, roles: [ROLES.PS_CHOIR], label: ROLES.PS_CHOIR, teamOnly: true };
+    if (/^p1$/i.test(key)) return { unit: UNITS.PRESBITER, roles: [ROLES.PENATUA, ROLES.DIAKEN], label: 'Presbiter/PIC' };
+    if (/^p[23]$/i.test(key)) return { unit: UNITS.PRESBITER, roles: [ROLES.PENATUA], label: ROLES.PENATUA };
+    if (/^p4$/i.test(key)) return { unit: UNITS.PRESBITER, roles: [ROLES.PENATUA, ROLES.DIAKEN], label: 'Presbiter' };
+    if (/^p5$/i.test(key)) return { unit: UNITS.PRESBITER, roles: [ROLES.DIAKEN], label: ROLES.DIAKEN };
+  }
+
+  if (category === 'pa' || category === 'pt') {
+    const classRequirement = PELKAT_CLASS_ROLE_MAP[normalizePelkatClassId(catId)];
+    const unit = classRequirement?.unit || (category === 'pa' ? UNITS.PA : UNITS.PT);
+    if (/cerita/i.test(key)) return { unit, roles: [ROLES.PEMBAWA_CERITA], label: ROLES.PEMBAWA_CERITA };
+    if (/pemandu/i.test(key)) return { unit, roles: [ROLES.PL_PELKAT], label: ROLES.PL_PELKAT };
+    if (/^kl_/i.test(key)) return { unit, roles: [ROLES.KAKAK_LAYAN], label: ROLES.KAKAK_LAYAN };
+    return { unit, roles: classRequirement?.role ? [classRequirement.role] : [], label: classRequirement?.role || unit };
+  }
+
+  if (category === 'presbiterPendamping') return { unit: UNITS.PRESBITER, roles: [ROLES.PENATUA, ROLES.DIAKEN], label: 'Presbiter Pendamping' };
+  if (category === 'pendetaPendamping') return { unit: UNITS.PENDETA, roles: [ROLES.PENDETA], label: ROLES.PENDETA };
+  if (category === 'pemimpinPersiapan') {
+    const unit = catId === 'pt' ? UNITS.PT : UNITS.PA;
+    return { unit, roles: [ROLES.KAKAK_LAYAN], label: 'Pemimpin Persiapan' };
+  }
+
+  return { unit: '', roles: [], label: task?.position || 'role yang sama' };
+};
+
+const isEligibleSwapReplacement = (person, requirement) => {
+  if (!person || !requirement) return false;
+  if (requirement.teamOnly) return Boolean(person.isTeam);
+  if (person.isTeam) return false;
+  const unitOk = !requirement.unit || hasActiveUnit(person, requirement.unit);
+  const roleOk = !requirement.roles?.length || requirement.roles.some(role => hasActiveRole(person, role, requirement.unit));
+  return unitOk && roleOk;
+};
+
 const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests, setSwapRequests, customServices }) => {
   const stats = calculateDetailedStats(personnel, assignments, swapRequests, customServices);
   const myStats = stats[user?.id] || { details: [], byPosition: {}, byTime: {}, swapsRequested: 0, swapsAccepted: 0 };
   const myFutureTasks = myStats.details.filter(d => new Date(d.date) >= new Date());
-  const myTeamIds = (user?.musicTeams || []).map(t => `TEAM_${t.id}`);
-  const incomingRequests = swapRequests.filter(req => (req.targetUserId === user?.id || (req.targetTeamId && myTeamIds.includes(req.targetTeamId))) && req.status === 'pending');
+  const incomingRequests = swapRequests.filter(req => req.targetUserId === user?.id && req.status === 'pending');
   const [selectedTask, setSelectedTask] = useState(null);
   const [targetUser, setTargetUser] = useState("");
   const [activeTab, setActiveTab] = useState('cari');
@@ -2477,13 +2547,66 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   });
+  const selectedRequirement = useMemo(
+    () => getSwapTaskRequirement(selectedTask),
+    [selectedTask]
+  );
+  const teamCandidates = useMemo(() => {
+    const teams = new Map();
+    personnel.filter(person => !person.isTeam).forEach(person => {
+      (person.musicTeams || []).forEach(team => {
+        if (String(team.status || 'active').toLowerCase() === 'inactive') return;
+        const id = String(team.id || '');
+        if (!id) return;
+        if (!teams.has(id)) teams.set(id, {
+          id,
+          name: team.name || id,
+          isTeam: true,
+          leaderId: String(team.leaderId || ''),
+          memberIds: [],
+          units: [UNITS.MUGER],
+          roles: [ROLES.PS_TIM_MUSIK],
+        });
+        teams.get(id).memberIds.push(String(person.id));
+        if (!teams.get(id).leaderId && normalizeRoleToken(team.memberRole) === normalizeRoleToken('Koordinator')) {
+          teams.get(id).leaderId = String(person.id);
+        }
+      });
+    });
+    return [...teams.values()].map(team => ({ ...team, memberIds: [...new Set(team.memberIds)] }));
+  }, [personnel]);
+
+  const selectedTeamId = selectedTask?.team?.id ? String(selectedTask.team.id) : '';
+  const selectedTeam = useMemo(
+    () => teamCandidates.find(team => String(team.id) === selectedTeamId) || null,
+    [teamCandidates, selectedTeamId]
+  );
+  const canRequestSelectedTask = !selectedTeam || String(selectedTeam.leaderId || '') === String(user?.id || '');
+
   const availableReplacements = useMemo(() => {
-    const selectedIsTeam = Boolean(selectedTask?.team?.id);
-    if (selectedIsTeam) {
-      return personnel.filter(p => p.isTeam && p.id !== selectedTask.team.id);
-    }
-    return personnel.filter(p => !p.isTeam && (p.units || []).some(u => (user.units || []).includes(u)) && p.id !== user.id);
-  }, [personnel, user, selectedTask]);
+    if (!selectedTask || !canRequestSelectedTask) return [];
+
+    const taskDate = String(selectedTask.date || '');
+    const taskTime = String(selectedTask.time || '');
+
+    const source = selectedRequirement?.teamOnly ? teamCandidates : personnel;
+
+    return source
+      .filter(person => String(person.id) !== String(user?.id))
+      .filter(person => !selectedTeamId || String(person.id) !== selectedTeamId)
+      .filter(person => isEligibleSwapReplacement(person, selectedRequirement))
+      .filter(person => !person.isTeam || Boolean(person.leaderId))
+      .filter(person => {
+        const memberIds = person.isTeam ? (person.memberIds || []).map(String) : [String(person.id)];
+        return !memberIds.some(memberId =>
+          (stats[memberId]?.details || []).some(detail =>
+            String(detail.date || '') === taskDate &&
+            (!taskTime || !detail.time || String(detail.time) === taskTime)
+          )
+        );
+      })
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'id'));
+  }, [personnel, teamCandidates, user?.id, selectedTask, selectedRequirement, stats, canRequestSelectedTask, selectedTeamId]);
   const filteredReplacements = useMemo(() => {
     if (!searchTerm) return availableReplacements;
     return availableReplacements.filter(p => (p.name || "").toLowerCase().includes(searchTerm.toLowerCase()));
@@ -2502,6 +2625,7 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
   };
   const handleRequestSwap = async () => {
     if (!selectedTask || !targetUser) return await showAlert("Pilih tugas dan nama pengganti.");
+    if (!canRequestSelectedTask) return await showAlert('Hanya Koordinator Tim Musik yang dapat menukar jadwal satu tim.');
     if (isPastCutoff(selectedTask.date, user.units || [])) {
       const isPelkat = (user.units || []).includes(UNITS.PA) || (user.units || []).includes(UNITS.PT);
       await showAlert(`Batas waktu pertukaran (H-${isPelkat ? '4' : '2'}) telah lewat. Anda tidak bisa lagi bertukar jadwal ini.`);
@@ -2513,9 +2637,10 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
     setSwapRequests([...swapRequests, {
       id: Date.now().toString(),
       requesterId: user.id,
-      targetUserId: targetPerson?.isTeam ? (targetPerson.memberIds || [])[0] || targetUser : targetUser,
+      targetUserId: targetPerson?.isTeam ? (targetPerson.leaderId || '') : targetUser,
       requesterTeamId: selectedTask.team?.id || null,
       targetTeamId: targetPerson?.isTeam ? targetPerson.id : null,
+      swapType: targetPerson?.isTeam ? 'TEAM' : 'PERSON',
       date: selectedTask.date,
       label: selectedTask.label,
       path: selectedTask.path,
@@ -2608,12 +2733,21 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
                   const pastCutoff = isPastCutoff(t.date, user.units || []);
                   const dynamicCutoffName = getCutoffDayName(t.date);
                   return (
-                    <div key={i} onClick={() => !pastCutoff && setSelectedTask(t)} className={`p-2 sm:p-3 border rounded transition ${pastCutoff ? 'bg-gray-50 opacity-60 cursor-not-allowed border-gray-200' : selectedTask?.path === t.path ? 'bg-purple-50 border-purple-400 cursor-pointer' : 'hover:bg-gray-50 cursor-pointer'}`}>
+                    <div key={i} onClick={() => {
+                      if (pastCutoff) return;
+                      const taskTeam = t.team?.id ? teamCandidates.find(team => String(team.id) === String(t.team.id)) : null;
+                      if (taskTeam && String(taskTeam.leaderId || '') !== String(user?.id || '')) {
+                        showAlert(`Jadwal ${taskTeam.name} hanya dapat ditukar oleh Koordinator Tim.`);
+                        return;
+                      }
+                      setSelectedTask(t);
+                    }} className={`p-2 sm:p-3 border rounded transition ${pastCutoff ? 'bg-gray-50 opacity-60 cursor-not-allowed border-gray-200' : selectedTask?.path === t.path ? 'bg-purple-50 border-purple-400 cursor-pointer' : 'hover:bg-gray-50 cursor-pointer'}`}>
                       <div className="flex justify-between items-start">
                         <div className={`font-bold text-xs sm:text-sm ${pastCutoff ? 'text-gray-500' : 'text-purple-800'}`}>{formatDateIndo(t.date)}</div>
                         {pastCutoff && <span className="bg-red-100 text-red-600 text-[9px] px-1.5 py-0.5 rounded font-bold uppercase">Batas Lewat</span>}
                       </div>
                       <div className={`text-xs sm:text-sm mt-1 ${pastCutoff ? 'text-gray-400' : 'text-gray-600'}`}>{t.label}</div>
+                      {t.team?.id && (() => { const taskTeam = teamCandidates.find(team => String(team.id) === String(t.team.id)); return taskTeam && String(taskTeam.leaderId || '') !== String(user?.id || '') ? <div className="text-[10px] text-gray-500 mt-1 italic">Tukar satu tim hanya oleh Koordinator Tim.</div> : null; })()}
                       {pastCutoff && <div className="text-[10px] text-red-500 mt-1 italic">Tukar jadwal ditutup (maksimal {dynamicCutoffName}).</div>}
                     </div>
                   )
@@ -2625,7 +2759,7 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
             <div className="bg-white p-3 sm:p-4 rounded shadow border border-purple-200">
               <h3 className="font-bold mb-3 sm:mb-4 text-gray-700 text-sm sm:text-base">Minta Tolong Gantikan</h3>
               <div className="mb-4 relative" ref={dropdownRef}>
-                <label className="text-xs sm:text-sm text-gray-600 block mb-1">Pilih Rekan Pengganti (Dari Unit Terdaftar)</label>
+                <label className="text-xs sm:text-sm text-gray-600 block mb-1">Pilih Rekan Pengganti yang Eligible</label>
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
                   <input type="text" className="w-full border border-gray-300 rounded pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition" placeholder="Ketik nama rekan..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setTargetUser(""); setShowDropdown(true); }} onFocus={() => setShowDropdown(true)} />
@@ -2633,11 +2767,16 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
                 {showDropdown && (
                   <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-y-auto">
                     {filteredReplacements.length === 0 ? (
-                      <div className="p-2 text-xs text-gray-500 italic text-center">Nama tidak ditemukan</div>
+                      <div className="p-2 text-xs text-gray-500 italic text-center">
+                        Tidak ada petugas eligible yang tersedia pada jadwal ini
+                      </div>
                     ) : (
                       filteredReplacements.map(p => (
                         <div key={p.id} onClick={() => handleSelectReplacement(p)} className="p-2 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition text-sm text-gray-800">
-                          {p.name} <span className="text-[10px] text-gray-500 block">{(p.units || []).join(', ')}</span>
+                          {formatPersonnelDisplayName(p)}
+                          <span className="text-[10px] text-gray-500 block">
+                            {selectedRequirement?.label || (p.units || []).join(', ')}
+                          </span>
                         </div>
                       ))
                     )}
@@ -2658,13 +2797,13 @@ const ShiftSwap = ({ user, assignments, setAssignments, personnel, swapRequests,
                 <div key={req.id} className="bg-white p-3 sm:p-4 rounded shadow border border-yellow-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <div className="w-full sm:w-auto">
                     <div className="text-[10px] sm:text-xs font-bold text-yellow-600 mb-1">PERMINTAAN PENGGANTI</div>
-                    <div className="font-bold text-sm sm:text-base text-gray-800">{requester?.name} meminta Anda menggantikan tugasnya:</div>
+                    <div className="font-bold text-sm sm:text-base text-gray-800">{req.swapType === 'TEAM' ? `${requester?.name || 'Koordinator tim'} meminta tim Anda menggantikan:` : `${requester?.name || 'Rekan'} meminta Anda menggantikan tugasnya:`}</div>
                     <div className="text-xs sm:text-sm text-gray-600 mt-1">Hari/Tanggal: <b>{formatDateIndo(req.date)}</b></div>
                     <div className="text-xs sm:text-sm text-gray-600">Tugas: <b>{req.label}</b></div>
                   </div>
                   <div className="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0">
                     <button onClick={() => handleReject(req)} className="flex-1 sm:flex-none bg-red-100 text-red-700 px-4 py-2 rounded font-bold hover:bg-red-200 text-sm">Tolak</button>
-                    <button onClick={() => handleAccept(req)} className="flex-1 sm:flex-none bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-sm">Terima Tugas</button>
+                    <button onClick={() => handleAccept(req)} className="flex-1 sm:flex-none bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-sm">{req.swapType === 'TEAM' ? 'Terima untuk Tim' : 'Terima Tugas'}</button>
                   </div>
                 </div>
               )
@@ -2693,6 +2832,10 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
   
   // Custom Service state
   const [showCustomModal, setShowCustomModal] = useState(false);
+  const [editingCustomService, setEditingCustomService] = useState(null);
+  const [showDateSettingModal, setShowDateSettingModal] = useState(false);
+  const [editingDateSetting, setEditingDateSetting] = useState('');
+  const [dateServiceMode, setDateServiceMode] = useState('REGULAR');
   const [customDate, setCustomDate] = useState("");
   const [customTime, setCustomTime] = useState('18:00');
   const [customTimeSuffix, setCustomTimeSuffix] = useState("");
@@ -2852,8 +2995,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
     );
 
   const isGpEditableMugerKey = (key) =>
-    /^ps_pemandu\d*$/.test(String(key || '')) ||
-    /^ps_vg\d+_/.test(String(key || ''));
+    /^ps_pemandu\d*$/.test(String(key || ''));
 
   const canEditSlot = (date, svc, key, tabId = activeUnitTab) => {
     if (!baseCanEdit) return false;
@@ -2862,6 +3004,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
     if (isGpScheduleAdmin && tabId === 'presbiter') {
       return (
         isIkmServiceDefinition(svc) &&
+        !svc?.isCommunion &&
         ['p2', 'p3', 'p4'].includes(String(key || ''))
       );
     }
@@ -2963,11 +3106,38 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
       return next;
     });
   };
+  const openAddCustomService = (date = '') => {
+    setEditingCustomService(null);
+    setCustomDate(date || '');
+    setCustomTime('18:00');
+    setCustomLabel(masterServiceTypes[0] || 'Ibadah Keluarga');
+    setCustomPCount(8);
+    setCustomLivestream(false);
+    setCustomLocation('Gedung Gereja');
+    setCustomNotes('');
+    setShowCustomModal(true);
+  };
+  const openEditCustomService = (date, service) => {
+    setEditingCustomService({ date, id: service.id });
+    setCustomDate(date);
+    setCustomTime(String(service.time || '18:00').split(' ')[0]);
+    setCustomLabel(service.label || masterServiceTypes[0] || 'Ibadah Keluarga');
+    setCustomPCount(Number(service.pCount || 8));
+    setCustomLivestream(Boolean(service.isLivestream));
+    setCustomLocation(service.location || 'Gedung Gereja');
+    setCustomNotes(service.notes || '');
+    setShowCustomModal(true);
+  };
+  const closeCustomServiceModal = () => {
+    setShowCustomModal(false);
+    setEditingCustomService(null);
+  };
   const handleAddCustomService = async (e) => {
     e.preventDefault();
     if (!customDate || !customTime || !customLabel) return await showAlert('Lengkapi data ibadah terlebih dahulu.');
+    const existingId = editingCustomService?.id;
     const service = {
-      id: `custom_${Date.now()}`,
+      id: existingId || `custom_${Date.now()}`,
       time: customTime,
       label: customLabel,
       pCount: Number(customPCount || 8),
@@ -2977,14 +3147,79 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
       location: customLocation,
       notes: customNotes.trim(),
     };
-    setCustomServices(prev => ({
-      ...prev,
-      [customDate]: [...(prev[customDate] || []), service].sort((a,b) => String(a.time).localeCompare(String(b.time))),
-    }));
+    setCustomServices(prev => {
+      const next = { ...prev };
+      if (editingCustomService) {
+        const oldDate = editingCustomService.date;
+        next[oldDate] = (next[oldDate] || []).filter(item => item.id !== existingId);
+        if (!next[oldDate].length) delete next[oldDate];
+      }
+      next[customDate] = [...(next[customDate] || []).filter(item => item.id !== service.id), service]
+        .sort((a,b) => String(a.time || '').localeCompare(String(b.time || '')));
+      return next;
+    });
+    if (editingCustomService && editingCustomService.date !== customDate) {
+      setAssignments(prev => {
+        const next = JSON.parse(JSON.stringify(prev));
+        const oldAssignment = next[editingCustomService.date]?.services?.[existingId];
+        if (oldAssignment) {
+          if (!next[customDate]) next[customDate] = {};
+          if (!next[customDate].services) next[customDate].services = {};
+          next[customDate].services[existingId] = oldAssignment;
+          delete next[editingCustomService.date].services[existingId];
+        }
+        return next;
+      });
+    }
     setPresbiterCount(prev => Math.max(prev, Number(customPCount || 8)));
-    setShowCustomModal(false);
+    closeCustomServiceModal();
     setCustomNotes('');
-    await showAlert('Ibadah berhasil ditambahkan.');
+    await showAlert(editingCustomService ? 'Ibadah berhasil diperbarui.' : 'Ibadah berhasil ditambahkan.');
+  };
+  const openDateSetting = date => {
+    const setting = getDateServiceSetting(date, customServices);
+    setEditingDateSetting(date);
+    setDateServiceMode(setting?.serviceMode || 'REGULAR');
+    setShowDateSettingModal(true);
+  };
+  const handleSaveDateSetting = async e => {
+    e.preventDefault();
+    if (!editingDateSetting) return;
+    const isCommunion = dateServiceMode === 'HOLY_COMMUNION';
+    setCustomServices(prev => {
+      const rows = (prev[editingDateSetting] || []).filter(item => !item?.isDateSetting && item?.id !== DATE_SETTING_ID);
+      return {
+        ...prev,
+        [editingDateSetting]: [
+          ...rows,
+          {
+            id: DATE_SETTING_ID,
+            isDateSetting: true,
+            serviceMode: dateServiceMode,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    });
+    setAssignments(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const services = next[editingDateSetting]?.services || {};
+      Object.entries(services).forEach(([serviceId, slots]) => {
+        const svc = SUNDAY_SERVICES.find(item => String(item.id) === String(serviceId));
+        if (!svc) return;
+        Object.keys(slots || {}).forEach(key => {
+          if (/^ps_vg\d+_/.test(key)) delete slots[key];
+        });
+        if (svc.isIKM) {
+          ['p2', 'p3', 'p4'].forEach(key => {
+            if (slots[key]) slots[key] = { userId: '', status: '' };
+          });
+        }
+      });
+      return next;
+    });
+    setShowDateSettingModal(false);
+    await showAlert(isCommunion ? 'Tanggal ditetapkan sebagai Sakramen Perjamuan Kudus.' : 'Tanggal dikembalikan menjadi ibadah reguler.');
   };
   const handleDeleteCustomService = async (dateStr, svcId, label) => {
     if (!await showConfirm(`Apakah Anda yakin ingin menghapus ibadah khusus "${label}" pada tanggal ${formatDateIndo(dateStr)}?`)) return;
@@ -3091,16 +3326,25 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
         const byId = new Map(activeMuger.map(p => [String(p.id), p]));
         const byName = new Map(activeMuger.map(p => [normalize(p.name), p]));
         snap.docs.forEach(row => {
-          const data = row.data();
-          if ((data.status || 'active') === 'inactive' || String(data.type || '').toUpperCase() !== 'TANDEM') return;
-          (Array.isArray(data.sections) ? data.sections : []).forEach(section => {
-            const lead = byName.get(normalize(section.label));
-            if (!lead) return;
-            (section.memberIds || []).forEach(memberId => {
-              const partner = byId.get(String(memberId));
-              if (partner && partner.id !== lead.id) dbMugerTandems.push([lead.id, partner.id]);
-            });
-          });
+          const data = row.data() || {};
+          if ((data.status || 'active') === 'inactive' || String(data.type || '').toUpperCase() !== 'DUET') return;
+
+          const duetGroup = (Array.isArray(data.groups) ? data.groups : []).find(group => (
+            String(group.entityType || 'PERSON').toUpperCase() === 'PERSON' &&
+            Array.isArray(group.memberIds)
+          ));
+          if (!duetGroup) return;
+
+          const memberIds = [...new Set(duetGroup.memberIds.map(String))]
+            .filter(memberId => byId.has(memberId));
+
+          // Satu konfigurasi duet boleh berisi lebih dari dua petugas.
+          // Scheduler membuat seluruh kombinasi pasangan dari grup tersebut.
+          for (let first = 0; first < memberIds.length; first += 1) {
+            for (let second = first + 1; second < memberIds.length; second += 1) {
+              dbMugerTandems.push([memberIds[first], memberIds[second]]);
+            }
+          }
         });
       } catch (error) {
         console.error('Gagal membaca tandem Muger untuk auto-fill:', error);
@@ -3162,29 +3406,29 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
             svcsToday.forEach(svc => { if(!next[date].services[svc.id]) next[date].services[svc.id] = {}; });
             const svcsMeta = svcsToday.map(svc => {
               const config = getServiceConfig(svc);
-              return { svc, actualPCount: config.actualPCount, isIKM: config.isIKM };
+              return { svc, actualPCount: config.actualPCount, isIKM: config.isIKM, isCommunion: Boolean(svc.isCommunion) };
             });
-            svcsMeta.forEach(({ svc, actualPCount, isIKM }) => {
+            svcsMeta.forEach(({ svc, actualPCount, isIKM, isCommunion }) => {
               const strictSlots = isIKM ? [1, 2, 3, 4] : [1, 2, 4];
               strictSlots.forEach(i => {
                 if (i <= actualPCount && !next[date].services[svc.id][`p${i}`]?.userId) {
                   let pool = personnel.filter(p => {
                     if (assignedToday.has(p.id)) return false;
-                    if (isIKM && (i >= 2 && i <= 4)) return (p.units || []).includes(UNITS.GP);
+                    if (isIKM && !isCommunion && (i >= 2 && i <= 4)) return (p.units || []).includes(UNITS.GP);
                     if ((p.units || []).includes(UNITS.PRESBITER)) {
                       if (i === 1) return (p.roles || []).includes(ROLES.PENATUA);
-                      if (!isIKM && i === 2) return (p.roles || []).includes(ROLES.PENATUA);
-                      if (!isIKM && i === 4) return (p.roles || []).includes(ROLES.DIAKEN);
+                      if ((!isIKM || isCommunion) && i === 2) return (p.roles || []).includes(ROLES.PENATUA);
+                      if ((!isIKM || isCommunion) && i === 4) return (p.roles || []).includes(ROLES.DIAKEN);
                     }
                     return false;
                   });
                   if (pool.length === 0) {
                     pool = personnel.filter(p => {
-                      if (isIKM && (i >= 2 && i <= 4)) return (p.units || []).includes(UNITS.GP);
+                      if (isIKM && !isCommunion && (i >= 2 && i <= 4)) return (p.units || []).includes(UNITS.GP);
                       if ((p.units || []).includes(UNITS.PRESBITER)) {
                         if (i === 1) return (p.roles || []).includes(ROLES.PENATUA);
-                        if (!isIKM && i === 2) return (p.roles || []).includes(ROLES.PENATUA);
-                        if (!isIKM && i === 4) return (p.roles || []).includes(ROLES.DIAKEN);
+                        if ((!isIKM || isCommunion) && i === 2) return (p.roles || []).includes(ROLES.PENATUA);
+                        if ((!isIKM || isCommunion) && i === 4) return (p.roles || []).includes(ROLES.DIAKEN);
                       }
                       return false;
                     });
@@ -3989,7 +4233,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                             <div>
                               <div className="font-semibold text-gray-800">{svc.label}</div>
                               <div className="text-xs text-gray-500">
-                                {is19 ? 'Pemandu Lagu GP Singer · Tim Musik' : 'Pemandu Lagu Muger'}
+                                {is19 ? 'Pemandu Lagu GP Singer · Tim Musik' : 'Pemandu Lagu Muger'}{svc.isCommunion ? ' · Perjamuan Kudus' : ''}
                               </div>
                             </div>
                           </div>
@@ -4045,7 +4289,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                               </div>
                             </div>
 
-                            <div className="mt-5 rounded-xl border border-orange-100 bg-white p-4">
+                            {!svc.isCommunion && <div className="mt-5 rounded-xl border border-orange-100 bg-white p-4">
                               <div className="mb-3 flex items-center justify-between gap-3">
                                 <h4 className="font-bold text-orange-800">Paduan Suara / Vocal Group</h4>
                                 {canEditSlot(date, svc, 'ps_vg1_name', 'muger') && choirCount < 3 && <button type="button" onClick={() => setMugerChoirCounts(v => ({...v, [countKey]: choirCount + 1}))} className="inline-flex items-center gap-1 rounded-lg border border-orange-200 px-2 py-1 text-xs font-bold text-orange-700 hover:bg-orange-50"><Plus className="h-3.5 w-3.5"/> Tambah PS/VG</button>}
@@ -4062,7 +4306,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                                   </div>
                                 ))}
                               </div>
-                            </div>
+                            </div>}
                           </div>
                         )}
                       </div>
@@ -4079,7 +4323,56 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
 
   const renderIbadahTab = () => {
     const monthDates = getServiceDatesInMonth(selectedMonth, customServices);
-    return <div className="space-y-4"><div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold text-blue-900">Kalender Ibadah</h3><p className="text-sm text-blue-700">Ibadah rutin dan ibadah tambahan pada bulan berjalan.</p></div>{canEdit && <button onClick={()=>setShowCustomModal(true)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white"><Plus className="h-4 w-4"/> Tambah Ibadah</button>}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{monthDates.map(date=><div key={date} className="rounded-xl border bg-white p-4 shadow-sm"><div className="mb-3 font-bold">{formatDateIndo(date)}</div><div className="space-y-2">{getServicesForDate(date,customServices).map(svc=><div key={svc.id} className="rounded-lg bg-gray-50 p-3"><div className="flex justify-between gap-2"><div><div className="font-semibold">{svc.label}</div><div className="text-xs text-gray-500">{svc.time} · {svc.location||'Gedung Gereja'}</div></div>{svc.isCustom&&canEdit&&<button onClick={()=>handleDeleteCustomService(date,svc.id,svc.label)} className="text-red-500"><Trash2 className="h-4 w-4"/></button>}</div>{svc.notes&&<p className="mt-2 text-xs text-gray-600">{svc.notes}</p>}<div className="mt-2 text-[11px] font-semibold text-blue-600">Live streaming: {svc.isLivestream?'Ya':'Tidak'}</div></div>)}</div></div>)}</div></div>;
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="font-bold text-blue-900">Kalender Ibadah</h3>
+            <p className="text-sm text-blue-700">Atur jenis ibadah per tanggal, serta tambah atau edit ibadah khusus.</p>
+          </div>
+          {canEdit && <button onClick={() => openAddCustomService()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white"><Plus className="h-4 w-4"/> Tambah Ibadah</button>}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {monthDates.map(date => {
+            const setting = getDateServiceSetting(date, customServices);
+            const isCommunion = setting?.serviceMode === 'HOLY_COMMUNION';
+            return (
+              <div key={date} className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-bold">{formatDateIndo(date)}</div>
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${isCommunion ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {isCommunion ? 'Sakramen Perjamuan Kudus' : 'Ibadah Reguler'}
+                    </div>
+                  </div>
+                  {canEdit && <button onClick={() => openDateSetting(date)} className="inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 text-xs font-bold text-blue-700 hover:bg-blue-50"><Edit3 className="h-3.5 w-3.5"/> Edit</button>}
+                </div>
+                <div className="space-y-2">
+                  {getServicesForDate(date, customServices).map(svc => (
+                    <div key={svc.id} className="rounded-lg bg-gray-50 p-3">
+                      <div className="flex justify-between gap-2">
+                        <div>
+                          <div className="font-semibold">{svc.label}</div>
+                          <div className="text-xs text-gray-500">{svc.time} · {svc.location || 'Gedung Gereja'}</div>
+                        </div>
+                        {svc.isCustom && canEdit && (
+                          <div className="flex items-start gap-1">
+                            <button onClick={() => openEditCustomService(date, svc)} className="rounded p-1 text-blue-600 hover:bg-blue-50" title="Edit ibadah"><Edit3 className="h-4 w-4"/></button>
+                            <button onClick={() => handleDeleteCustomService(date, svc.id, svc.label)} className="rounded p-1 text-red-500 hover:bg-red-50" title="Hapus ibadah"><Trash2 className="h-4 w-4"/></button>
+                          </div>
+                        )}
+                      </div>
+                      {svc.notes && <p className="mt-2 text-xs text-gray-600">{svc.notes}</p>}
+                      <div className="mt-2 text-[11px] font-semibold text-blue-600">Live streaming: {svc.isLivestream ? 'Ya' : 'Tidak'}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   const ALL_PETUGAS_SLOT_ORDER = {
@@ -4367,7 +4660,7 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
         {activeUnitTab === 'multimedia' && (
           <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {dates.map(date => {
-              const customRows=customServices[date]||[];
+              const customRows=getCustomServicesOnly(date, customServices);
               const hasSundayService=getServicesForDate(date,customServices).some(svc=>!svc.isCustom&&/ibadah hari minggu/i.test(String(svc.label||'')));
               const slideOptions=slideCreatorOptions.map(person=>({value:person.id,label:formatPersonnelDisplayName(person)}));
               if(!hasSundayService&&!customRows.length)return null;
@@ -4410,7 +4703,10 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                             <span className={`text-[8px] sm:text-[9px] whitespace-nowrap ${svc.isCustom ? 'text-emerald-600 font-bold' : 'text-blue-600'}`}>{svc.label}</span>
                           </div>
                           {svc.isCustom && canEdit && (
-                            <button onClick={() => handleDeleteCustomService(date, svc.id, svc.label)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded ml-1 flex-shrink-0" title="Hapus Ibadah Khusus Ini"><Trash2 className="w-3 h-3" /></button>
+                            <div className="ml-1 flex flex-shrink-0 gap-1">
+                              <button onClick={() => openEditCustomService(date, svc)} className="rounded p-1 text-blue-600 hover:bg-blue-50" title="Edit Ibadah Khusus Ini"><Edit3 className="h-3 w-3" /></button>
+                              <button onClick={() => handleDeleteCustomService(date, svc.id, svc.label)} className="rounded p-1 text-red-500 hover:bg-red-50" title="Hapus Ibadah Khusus Ini"><Trash2 className="h-3 w-3" /></button>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -4427,13 +4723,13 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
                           const selectedValue=getVal(date,'services',svc.id,col.id);
                           if(activeUnitTab!=='presbiter'&&String(p.id)!==String(selectedValue)&&!isAvailableForService(p,date,svc.id,col.id))return false;
                           if (activeUnitTab === 'presbiter') {
-                            const isGP = isIKM && (colNum >= 2 && colNum <= 4);
+                            const isGP = isIKM && !svc.isCommunion && (colNum >= 2 && colNum <= 4);
                             if (isGP) return (p.units || []).includes(UNITS.GP);
                             if ((p.units || []).includes(UNITS.PRESBITER)) {
                               if (colNum === 1) return hasActiveRole(p, ROLES.PENATUA, UNITS.PRESBITER);
                               if (!isIKM && colNum === 2) return hasActiveRole(p, ROLES.PENATUA, UNITS.PRESBITER);
                               if (!isIKM && colNum === 4) return hasActiveRole(p, ROLES.DIAKEN, UNITS.PRESBITER);
-                              if (isIKM && (colNum >= 2 && colNum <= 4)) return false; 
+                              if (isIKM && !svc.isCommunion && (colNum >= 2 && colNum <= 4)) return false; 
                               return true;
                             }
                             return false;
@@ -4595,8 +4891,8 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
       {showCustomModal && (
         <div className="absolute top-16 left-0 right-0 z-20 flex justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl border border-gray-300 w-full max-w-sm p-6 relative">
-            <button onClick={() => setShowCustomModal(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-700"><X className="w-5 h-5"/></button>
-            <h3 className="font-bold text-gray-800 mb-4 text-lg border-b pb-2">Jadwal Ibadah Khusus</h3>
+            <button onClick={closeCustomServiceModal} className="absolute top-3 right-3 text-gray-400 hover:text-gray-700"><X className="w-5 h-5"/></button>
+            <h3 className="font-bold text-gray-800 mb-4 text-lg border-b pb-2">{editingCustomService ? 'Edit Ibadah' : 'Tambah Ibadah'}</h3>
             <form onSubmit={handleAddCustomService} className="space-y-4">
               <div><label className="mb-1 block text-xs font-bold text-gray-600">Nama Ibadah</label><select className="w-full rounded border p-2 text-sm" value={customLabel} onChange={e=>setCustomLabel(e.target.value)}>{masterServiceTypes.map(name=><option key={name} value={name}>{name}</option>)}</select><p className="mt-1 text-[11px] text-gray-500">Pilihan berasal dari Master → Ibadah.</p></div>
               <div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-bold text-gray-600">Tanggal</label><input type="date" required min={`${selectedMonth}-01`} max={`${selectedMonth}-31`} className="w-full rounded border p-2 text-sm" value={customDate} onChange={e=>setCustomDate(e.target.value)}/></div><div><label className="mb-1 block text-xs font-bold text-gray-600">Waktu</label><input type="time" required className="w-full rounded border p-2 text-sm" value={customTime} onChange={e=>setCustomTime(e.target.value)}/></div></div>
@@ -4604,7 +4900,29 @@ const ScheduleManager = ({ personnel, assignments, setAssignments, user, publish
               <div><label className="mb-1 block text-xs font-bold text-gray-600">Lokasi</label><select className="w-full rounded border p-2 text-sm" value={customLocation} onChange={e=>setCustomLocation(e.target.value)}><option>Gedung Gereja</option><option>Ruang Pertemuan</option><option>Lounge</option><option>Ruang 2A</option><option>Ruang 2B</option><option>Ruang 3A</option><option>Aula TSK 11</option></select></div>
               <div><label className="mb-1 block text-xs font-bold text-gray-600">Notes</label><textarea rows="3" className="w-full rounded border p-2 text-sm" value={customNotes} onChange={e=>setCustomNotes(e.target.value)} placeholder="Catatan tambahan..."/></div>
               <div><label className="mb-1 block text-xs font-bold text-gray-600">Jumlah Maksimal Presbiter</label><input type="number" min="1" max="30" className="w-full rounded border p-2 text-sm" value={customPCount} onChange={e=>setCustomPCount(e.target.value)}/></div>
-              <button type="submit" className="w-full bg-emerald-600 text-white rounded p-2 text-sm font-bold hover:bg-emerald-700 transition">Tambahkan Ibadah</button>
+              <button type="submit" className="w-full bg-emerald-600 text-white rounded p-2 text-sm font-bold hover:bg-emerald-700 transition">{editingCustomService ? 'Simpan Perubahan' : 'Tambahkan Ibadah'}</button>
+            </form>
+          </div>
+        </div>
+      )}
+      {showDateSettingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="relative w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+            <button onClick={() => setShowDateSettingModal(false)} className="absolute right-3 top-3 text-gray-400 hover:text-gray-700"><X className="h-5 w-5"/></button>
+            <h3 className="mb-1 text-lg font-bold text-gray-800">Edit Jenis Ibadah</h3>
+            <p className="mb-4 text-sm text-gray-500">{formatDateIndo(editingDateSetting)}</p>
+            <form onSubmit={handleSaveDateSetting} className="space-y-4">
+              <label className={`block cursor-pointer rounded-xl border p-4 ${dateServiceMode === 'REGULAR' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+                <input type="radio" className="mr-2" checked={dateServiceMode === 'REGULAR'} onChange={() => setDateServiceMode('REGULAR')}/>
+                <span className="font-bold">Ibadah Reguler</span>
+                <span className="mt-1 block pl-6 text-xs text-gray-500">Susunan petugas mengikuti jadwal ibadah biasa.</span>
+              </label>
+              <label className={`block cursor-pointer rounded-xl border p-4 ${dateServiceMode === 'HOLY_COMMUNION' ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}>
+                <input type="radio" className="mr-2" checked={dateServiceMode === 'HOLY_COMMUNION'} onChange={() => setDateServiceMode('HOLY_COMMUNION')}/>
+                <span className="font-bold">Sakramen Perjamuan Kudus</span>
+                <span className="mt-1 block pl-6 text-xs text-gray-500">Berlaku untuk seluruh ibadah pada tanggal ini. IKM P2–P4 diisi Presbiter dan PS/VG ditutup.</span>
+              </label>
+              <button type="submit" className="w-full rounded-lg bg-blue-600 py-2 text-sm font-bold text-white hover:bg-blue-700">Simpan</button>
             </form>
           </div>
         </div>
@@ -4711,9 +5029,38 @@ const ScheduleViewPublic = ({ services, personnel, assignments, selectedDate, on
     );
     return group?.name || group?.groupName || group?.timName || '-';
   };
-  const getPersonnelName = (svcId, key) => {
-    const uid = assignments[selectedDate]?.services?.[svcId]?.[key]?.userId;
-    return resolveAssigneeName(uid);
+  const getPersonnelName = (serviceId, key) => {
+    const assignedId =
+      assignments[selectedDate]?.services?.[serviceId]?.[key]?.userId;  
+
+    if (!assignedId) return '-';  
+
+    // Petugas biasa, termasuk PS/VG yang dibuat lewat Master Petugas
+    const person = personnel.find(
+      item => String(item.id) === String(assignedId)
+    );  
+
+    if (person) {
+      return formatPersonnelDisplayName(person);
+    } 
+
+    // Tim musik / group lama
+    const group = mugerGroups.find(
+      item => String(item.id) === String(assignedId)
+    );  
+
+    if (group) {
+      return group.name;
+    } 
+
+    return '-';
+  };
+  const getAssignedNames = (serviceId, keys = []) => {
+    const names = keys
+      .map(key => getPersonnelName(serviceId, key))
+      .filter(name => name && name !== '-');
+
+    return [...new Set(names)].join(', ') || '-';
   };
   const getPelkatName = (category, classId, key) => {
     const uid = assignments[selectedDate]?.[category]?.[classId]?.[key]?.userId;
@@ -5028,49 +5375,134 @@ const ScheduleViewPublic = ({ services, personnel, assignments, selectedDate, on
                     </div>
                   </div>
                   <div>
-                    <div className="font-black text-gray-400 uppercase mb-3 border-b pb-1">Musik Gereja (Muger)</div>
+                    <div className="font-black text-gray-400 uppercase mb-3 border-b pb-1">
+                      Musik Gereja (Muger)
+                    </div>                  
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                      {/* Pemandu Lagu */}
                       <div className="flex justify-between border-b border-gray-50 pb-1">
-                        <span className="font-medium text-gray-500">Organis (08.00)</span>
-                        <span className="text-right text-gray-800 font-medium truncate ml-2">{getPersonnelName(s.id, 'ps_organis')}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-gray-50 pb-1">
-                        <span className="font-medium text-gray-500">Pemandu Lagu</span>
-                        <span className="text-right text-gray-800 font-medium truncate ml-2">{getPersonnelName(s.id, 'ps_pemandu')}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-gray-50 pb-1">
-                        <span className="font-medium text-gray-500">Pemusik 1</span>
-                        <span className="text-right text-gray-800 font-medium truncate ml-2">{getPersonnelName(s.id, 'ps_pemusik1')}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-gray-50 pb-1">
-                        <span className="font-medium text-gray-500">Pemusik 2</span>
-                        <span className="text-right text-gray-800 font-medium truncate ml-2">{getPersonnelName(s.id, 'ps_pemusik2')}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-gray-50 pb-1">
-                        <span className="font-medium text-gray-500">Tim Musik (19.00)</span>
-                        {(() => {
-                          const raw = getRawVal(s.id, 'ps_tim_musik');
-                          const team = personnel.find(p => p.id === raw?.userId && p.isTeam);
-                          return <span className="text-right text-gray-800 font-medium ml-2 max-w-[65%]" title={(team?.memberNames || []).join(', ')}>{team ? <><span className="block font-bold">{team.name}</span><span className="block text-[10px] text-gray-500 leading-tight">{(team.memberNames || []).join(', ')}</span></> : getPersonnelName(s.id, 'ps_tim_musik')}</span>;
-                        })()}
-                      </div>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {[1, 2, 3].map(i => {
-                        const vgName = getPersonnelName(s.id, `ps_vg${i}_name`);
-                        if(!vgName || vgName === '-') return null;
-                        const est = getRawVal(s.id, `ps_vg${i}_est`);
-                        const soloist = getRawVal(s.id, `ps_vg${i}_soloist`);
-                        const instr = getRawVal(s.id, `ps_vg${i}_instr`);
-                        return (
-                          <div key={`vg${i}`} className="flex flex-col bg-gray-50 p-2 rounded border border-gray-100">
-                            <span className="font-bold text-purple-700 mb-1 text-[10px] uppercase">PS/VG {i} {i===1 ? '(Sblm Khotbah)' : '(Stlh Doa Syafaat)'}</span>
-                            <span className="text-gray-800 text-sm font-bold">{vgName}</span>
-                            <span className="text-gray-500 text-[10px] mt-0.5 font-medium">
-                              {[est ? `Est: ${est} org` : "", soloist === 'Y' ? 'Ada Solois' : "", instr ? `Alat: ${instr}` : ""].filter(Boolean).join(' | ')}
+                        <span className="font-medium text-gray-500">
+                          Pemandu Lagu
+                        </span>                 
+
+                        <span className="text-right text-gray-800 font-medium ml-2">
+                          {getAssignedNames(s.id, [
+                            'ps_pemandu1',
+                            'ps_pemandu2',
+                            'ps_pemandu3',
+                            'ps_pemandu4',
+                            // kompatibilitas data lama
+                            'ps_pemandu',
+                          ])}
+                        </span>
+                      </div>                  
+
+                      {/* Pukul 08.00: Organis ditampilkan sebagai Pemusik */}
+                      {String(s.time || '').startsWith('08:00') ? (
+                        <div className="flex justify-between border-b border-gray-50 pb-1">
+                          <span className="font-medium text-gray-500">
+                            Pemusik
+                          </span>                 
+
+                          <span className="text-right text-gray-800 font-medium truncate ml-2">
+                            {getAssignedNames(s.id, [
+                              'ps_organis',
+                              'ps_pemusik1',
+                            ])}
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex justify-between border-b border-gray-50 pb-1">
+                            <span className="font-medium text-gray-500">
+                              Pemusik 1
+                            </span>                 
+
+                            <span className="text-right text-gray-800 font-medium truncate ml-2">
+                              {getPersonnelName(s.id, 'ps_pemusik1')}
+                            </span>
+                          </div>                  
+
+                          <div className="flex justify-between border-b border-gray-50 pb-1">
+                            <span className="font-medium text-gray-500">
+                              Pemusik 2
+                            </span>                 
+
+                            <span className="text-right text-gray-800 font-medium truncate ml-2">
+                              {getPersonnelName(s.id, 'ps_pemusik2')}
                             </span>
                           </div>
-                        )
+                        </>
+                      )}                  
+
+                      {String(s.time || '').startsWith('19:00') && (
+                        <div className="flex justify-between border-b border-gray-50 pb-1">
+                          <span className="font-medium text-gray-500">
+                            Tim Musik
+                          </span>                 
+
+                          <span className="text-right text-gray-800 font-medium truncate ml-2">
+                            {getPersonnelName(s.id, 'ps_tim_musik')}
+                          </span>
+                        </div>
+                      )}
+                    </div>                  
+
+                    {/* PS/VG */}
+                    <div className="mt-3 space-y-2">
+                      {[1, 2, 3].map(i => {
+                        const vgName = getPersonnelName(
+                          s.id,
+                          `ps_vg${i}_name`
+                        );                  
+
+                        const est = getRawVal(
+                          s.id,
+                          `ps_vg${i}_est`
+                        );                  
+
+                        const soloist = getRawVal(
+                          s.id,
+                          `ps_vg${i}_soloist`
+                        );                  
+
+                        const instr = getRawVal(
+                          s.id,
+                          `ps_vg${i}_instr`
+                        );                  
+
+                        if (!vgName || vgName === '-') return null;                 
+
+                        return (
+                          <div
+                            key={`vg${i}`}
+                            className="flex flex-col bg-gray-50 p-2 rounded border border-gray-100"
+                          >
+                            <span className="font-bold text-purple-700 mb-1 text-[10px] uppercase">
+                              PS/VG {i}{' '}
+                              {i === 1
+                                ? '(Sebelum Khotbah)'
+                                : '(Setelah Doa Syafaat)'}
+                            </span>                 
+
+                            <span className="text-gray-800 text-sm font-bold">
+                              {vgName}
+                            </span>                 
+
+                            {(est || soloist === 'Y' || instr) && (
+                              <span className="text-gray-500 text-[10px] mt-0.5 font-medium">
+                                {[
+                                  est ? `Est: ${est} orang` : '',
+                                  soloist === 'Y' ? 'Ada Solois' : '',
+                                  instr ? `Alat: ${instr}` : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' | ')}
+                              </span>
+                            )}
+                          </div>
+                        );
                       })}
                     </div>
                   </div>
@@ -5232,6 +5664,7 @@ const loadPersonnelFromNormalizedCollections = async () => {
       name: data.timName || data.groupName || data.name || row.id,
       type: data.type || 'MUSIC_TEAM',
       status: data.status || 'active',
+      leaderId: String(data.leaderId || data.coordinatorId || ''),
     }];
   }));
 
@@ -5359,7 +5792,7 @@ const loadPersonnelFromNormalizedCollections = async () => {
     const groupId = String(data.groupId || '');
     if (!userId || !groupId) continue;
     const group = groupsById.get(groupId) || { id: groupId, name: groupId, type: 'MUSIC_TEAM', status: 'active' };
-    const member = { id: groupId, name: group.name, memberRole: data.memberRole || 'MEMBER', status: data.status || 'active' };
+    const member = { id: groupId, name: group.name, memberRole: data.memberRole || 'MEMBER', status: data.status || 'active', leaderId: group.leaderId || '' };
     const target = group.type === 'COLLABORATION' ? collaborationsByUser : teamsByUser;
     if (!target.has(userId)) target.set(userId, []);
     target.get(userId).push(member);
@@ -6343,14 +6776,13 @@ const MainApp = () => {
       await showAlert(`Jadwal ${tabLabels[unit] || unit.toUpperCase()} Bulan Ini Berhasil Dipublikasikan!`);
     }
   };
-  const currentUserTeamIds = user ? (user.musicTeams || []).map(t => `TEAM_${t.id}`) : [];
-  const incomingRequestsCount = user ? swapRequests.filter(req => (req.targetUserId === user.id || (req.targetTeamId && currentUserTeamIds.includes(req.targetTeamId))) && req.status === 'pending').length : 0;
+  const incomingRequestsCount = user ? swapRequests.filter(req => req.targetUserId === user.id && req.status === 'pending').length : 0;
   const prevSwapCount = useRef(swapRequests.length);
   useEffect(() => {
     if (!user) return;
     if (swapRequests.length > prevSwapCount.current) {
       const newReq = swapRequests[swapRequests.length - 1];
-      if ((newReq.targetUserId === user.id || (newReq.targetTeamId && currentUserTeamIds.includes(newReq.targetTeamId))) && newReq.status === 'pending') {
+      if (newReq.targetUserId === user.id && newReq.status === 'pending') {
         triggerPushNotification("Permintaan Tukar Jadwal", `Ada permintaan tukar jadwal dari rekan Anda pada tanggal ${formatDateIndo(newReq.date)}.`);
       }
     }

@@ -11,6 +11,7 @@
     "seed:reset": "node scripts/seed-firestore.mjs --reset"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "firebase": "^12.15.0",
     "firebase-admin": "^13.4.0",
     "lucide-react": "^0.468.0",
